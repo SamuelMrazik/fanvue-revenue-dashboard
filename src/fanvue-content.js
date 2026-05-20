@@ -4,6 +4,7 @@ import {
   fanvueApiRequest,
   isFanvueNotFound
 } from "./fanvue-api.js";
+import { isoEndExclusive } from "./periods.js";
 
 export async function fetchModelVault(accessToken, model) {
   const creatorUuid = creatorUuidFromModel(model);
@@ -134,7 +135,8 @@ export async function fetchModelTrackingSummary(accessToken, model, period) {
   for (const path of linkCandidates) {
     try {
       links = await fanvueApiPaginate(accessToken, path, {
-        listKeys: ["links", "trackingLinks"]
+        listKeys: ["links", "trackingLinks"],
+        pagination: "cursor"
       });
       if (links.length) break;
     } catch (error) {
@@ -172,32 +174,66 @@ export async function fetchModelTrackingSummary(accessToken, model, period) {
 
 export async function fetchModelAudienceSummary(accessToken, model, period) {
   const creatorUuid = creatorUuidFromModel(model);
-  if (!creatorUuid) throw new Error("Connect Fanvue to load subscriber insights.");
+  const query = audienceQueryFromPeriod(period);
 
-  const subscriberCandidates = [
-    `/creators/${creatorUuid}/insights/subscribers`,
-    `/insights/subscribers`
+  const candidates = [
+    { path: "/insights/subscribers", query },
+    ...(creatorUuid ? [{ path: `/creators/${creatorUuid}/insights/subscribers`, query }] : [])
   ];
 
-  let payload = null;
+  let rows = [];
   let lastError = null;
-  for (const path of subscriberCandidates) {
+  for (const candidate of candidates) {
     try {
-      payload = await fanvueApiRequest(accessToken, path, {
-        query: {
-          startDate: period.startDate,
-          endDate: period.endDate,
-          creatorUserUuid: path === "/insights/subscribers" ? creatorUuid : undefined
-        }
+      const paginated = await fanvueApiPaginate(accessToken, candidate.path, {
+        query: candidate.query,
+        pagination: "cursor",
+        listKeys: ["data", "items", "events", "daily", "series", "results", "buckets"]
       });
-      break;
+      rows = paginated.map(normalizeAudienceRow).filter((row) => row.date);
+      if (rows.length) break;
+
+      const payload = await fanvueApiRequest(accessToken, candidate.path, { query: candidate.query });
+      rows = extractAudienceRows(payload);
+      if (rows.length) break;
     } catch (error) {
       lastError = error;
     }
   }
-  if (!payload && lastError) throw lastError;
 
-  return normalizeAudienceSummary(payload, period);
+  if (!rows.length && lastError) throw lastError;
+
+  const filtered = rows.filter((row) => dateInRange(row.date, period.startDate, period.endDate));
+  return {
+    period,
+    newSubscribers: sum(filtered.map((row) => row.newSubscribers)),
+    newFollowers: sum(filtered.map((row) => row.newFollowers)),
+    cancelledSubscribers: sum(filtered.map((row) => row.cancelledSubscribers)),
+    daily: filtered
+  };
+}
+
+function audienceQueryFromPeriod(period) {
+  const endExclusive = period.endExclusiveIso || period.endIso || isoEndExclusive(period.endDate);
+  return {
+    startDate: period.startIso || `${period.startDate}T00:00:00.000Z`,
+    endDate: endExclusive
+  };
+}
+
+function normalizeAudienceRow(row) {
+  return {
+    date: dateKey(row.date || row.day || row.periodStart || row.period_start || row.startDate || row.start_date),
+    newSubscribers: numberValue(
+      row.newSubscribersCount ?? row.newSubscribers ?? row.subscribersAdded ?? row.subscribers ?? row.added
+    ),
+    newFollowers: numberValue(
+      row.newFollowersCount ?? row.newFollowers ?? row.followersAdded ?? row.followers
+    ),
+    cancelledSubscribers: numberValue(
+      row.cancelledSubscribersCount ?? row.cancelledSubscribers ?? row.subscribersCancelled ?? row.churned
+    )
+  };
 }
 
 function normalizeVaultMedia(item) {
@@ -277,19 +313,6 @@ function aggregateTrackingChannel(links) {
   };
 }
 
-function normalizeAudienceSummary(payload, period) {
-  const rows = extractAudienceRows(payload);
-  const filtered = rows.filter((row) => dateInRange(row.date, period.startDate, period.endDate));
-
-  return {
-    period,
-    newSubscribers: sum(filtered.map((row) => row.newSubscribers)),
-    newFollowers: sum(filtered.map((row) => row.newFollowers)),
-    cancelledSubscribers: sum(filtered.map((row) => row.cancelledSubscribers)),
-    daily: filtered
-  };
-}
-
 function extractAudienceRows(payload) {
   const list = Array.isArray(payload) ? payload
     : Array.isArray(payload?.data) ? payload.data
@@ -297,18 +320,11 @@ function extractAudienceRows(payload) {
     : Array.isArray(payload?.items) ? payload.items
     : Array.isArray(payload?.daily) ? payload.daily
     : Array.isArray(payload?.series) ? payload.series
+    : Array.isArray(payload?.results) ? payload.results
+    : Array.isArray(payload?.buckets) ? payload.buckets
     : [];
 
-  return list.map((row) => ({
-    date: dateKey(row.date || row.day || row.periodStart || row.timestamp || row.startDate),
-    newSubscribers: numberValue(
-      row.newSubscribers ?? row.subscribersAdded ?? row.subscribers ?? row.subscriberEvents?.new ?? row.added
-    ),
-    newFollowers: numberValue(
-      row.newFollowers ?? row.followersAdded ?? row.followers ?? row.followerEvents?.new
-    ),
-    cancelledSubscribers: numberValue(row.cancelledSubscribers ?? row.subscribersCancelled ?? row.churned)
-  })).filter((row) => row.date);
+  return list.map(normalizeAudienceRow).filter((row) => row.date);
 }
 
 function numberValue(value) {

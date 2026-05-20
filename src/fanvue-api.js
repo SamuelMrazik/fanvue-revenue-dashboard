@@ -41,9 +41,10 @@ export async function fanvueApiRequest(accessToken, path, options = {}) {
   }
 
   if (!response.ok) {
-    const message = payload.error_description || payload.error || payload.message || response.statusText;
+    const message = formatFanvueApiError(payload, response);
     const error = new Error(`Fanvue API ${response.status}: ${message}`);
     error.statusCode = response.status;
+    error.payload = payload;
     throw error;
   }
 
@@ -53,10 +54,26 @@ export async function fanvueApiRequest(accessToken, path, options = {}) {
 export async function fanvueApiPaginate(accessToken, path, options = {}) {
   const size = options.limit ?? 50;
   const maxPages = options.maxPages ?? 8;
-  const pageItems = await paginateByPage(accessToken, path, options, size, maxPages);
-  if (pageItems.length) return pageItems;
+  if (options.pagination !== "cursor") {
+    const pageItems = await paginateByPage(accessToken, path, options, size, maxPages);
+    if (pageItems.length) return pageItems;
+  }
 
   return paginateByCursor(accessToken, path, options, size, maxPages);
+}
+
+function formatFanvueApiError(payload, response) {
+  if (typeof payload?.error === "string" && payload.error.trim()) return payload.error.trim();
+  if (typeof payload?.error === "object" && payload.error) {
+    return payload.error.message || payload.error.detail || JSON.stringify(payload.error);
+  }
+  return payload.error_description
+    || payload.message
+    || payload.detail
+    || payload.title
+    || (Object.keys(payload).length ? JSON.stringify(payload).slice(0, 240) : "")
+    || response.statusText
+    || "Request failed";
 }
 
 async function paginateByPage(accessToken, path, options, size, maxPages) {

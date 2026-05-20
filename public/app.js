@@ -715,7 +715,7 @@ function renderConnection(model) {
   elements.connectionDetails.innerHTML = detailRows([
     ["Fanvue", oauthConnected ? `Connected${model.fanvueOAuth.expiresAt ? ` until ${formatDate(model.fanvueOAuth.expiresAt)}` : ""}` : fanvueConfigLabel()],
     ["Profile", oauthConnected ? fanvueProfileLabel(model.fanvueOAuth.profile) : "Not connected"],
-    ["Scopes", model.fanvueOAuth?.scope || state.fanvueStatus.scopes || "—"],
+    ["Scopes", model.fanvueOAuth?.scope || state.fanvueStatus?.scopes || "—"],
     ["Last sync", model.lastSyncAt ? formatDate(model.lastSyncAt) : "Never"],
     ["Next sync", model.nextSyncAt ? formatDate(model.nextSyncAt) : "Not scheduled"],
     ["Interval", `${model.syncIntervalMinutes} minutes`],
@@ -1176,8 +1176,10 @@ function modelHasIssue(model) {
 function modelHasTrafficWarning(model) {
   const snapshot = latestSnapshotForModel(model.id);
   if (!snapshot?.contentErrors) return false;
-  const keys = ["tracking", "audience"];
-  return keys.some((key) => Boolean(snapshot.contentErrors[key]));
+  if (snapshot.contentErrors.tracking) return true;
+  const hasLinks = (snapshot.trackingSummary?.links?.length || 0) > 0;
+  if (hasLinks) return false;
+  return Boolean(snapshot.contentErrors.audience);
 }
 
 function contentErrorsForModel(model) {
@@ -1585,6 +1587,17 @@ function buildInsightsNote(snapshot) {
   return errors.length ? errors.map(([key, message]) => `${key}: ${message}`).join(" · ") : "";
 }
 
+function trafficInsightsNote(snapshot) {
+  if (!snapshot?.contentErrors) return "";
+  const tracking = snapshot.contentErrors.tracking;
+  if (tracking) return `tracking: ${tracking}`;
+  const audience = snapshot.contentErrors.audience;
+  const hasLinks = (snapshot.trackingSummary?.links?.length || 0) > 0;
+  if (audience && !hasLinks) return `audience: ${audience}`;
+  if (audience && hasLinks) return `Subscriber API issue (links still loaded): ${audience}`;
+  return "";
+}
+
 function comparisonPointsForModel(model, insights, dates) {
   const revenueMetric = state.comparisonMetric === "gross" ? "gross" : "ownerNet";
   const previousMetric = state.metricMode;
@@ -1651,10 +1664,11 @@ function renderModelTrafficTab(model) {
     priorInsights.external
   );
 
-  const syncNote = buildInsightsNote(latestSnapshotForModel(model.id));
+  const snapshot = latestSnapshotForModel(model.id);
+  const syncNote = trafficInsightsNote(snapshot);
   elements.modelTrackingSubtitle.textContent = syncNote
     ? syncNote
-    : `${periodLabel()} · revenue from subs on external links`;
+    : `${periodLabel()} · ${insights.links.length} tracking links`;
   elements.modelTrafficSplit.innerHTML = `
     <article class="traffic-card internal"><span>Internal</span><strong>${formatInternalCell(boosts)}</strong>${boostFlag ? `<small>Likely internal boost</small>` : ""}</article>
     <article class="traffic-card external"><span>External</span><strong>${formatTrafficCount(external)}</strong></article>
@@ -1663,9 +1677,10 @@ function renderModelTrafficTab(model) {
 
   renderInternalTrafficChart(model);
 
-  if (!insights.links.length && syncNote) {
-    elements.modelTrafficSplit.innerHTML = `<div class="chart-empty compact-empty">${escapeHtml(syncNote)}</div>`;
-    elements.modelTrackingRows.innerHTML = `<tr><td colspan="4">${escapeHtml(syncNote)}</td></tr>`;
+  if (!insights.links.length) {
+    const emptyMessage = syncNote || buildInsightsNote(snapshot) || "No tracking links returned. Reconnect Fanvue with read:tracking_links, then sync.";
+    elements.modelTrafficSplit.innerHTML = `<div class="chart-empty compact-empty">${escapeHtml(emptyMessage)}</div>`;
+    elements.modelTrackingRows.innerHTML = `<tr><td colspan="4">${escapeHtml(emptyMessage)}</td></tr>`;
     renderInternalTrafficChart(model);
     return;
   }

@@ -3,38 +3,43 @@ export function periodBounds(preset, custom = {}) {
   const endToday = dateKey(today);
 
   if (preset === "today") {
-    return { preset, startDate: endToday, endDate: endToday, startIso: isoStart(endToday), endIso: isoEnd(endToday) };
+    return periodRange(preset, endToday, endToday);
   }
   if (preset === "yesterday") {
     const day = shiftDays(today, -1);
     const key = dateKey(day);
-    return { preset, startDate: key, endDate: key, startIso: isoStart(key), endIso: isoEnd(key) };
+    return periodRange(preset, key, key);
   }
   if (preset === "last7") {
     const startDate = dateKey(shiftDays(today, -6));
-    return { preset, startDate, endDate: endToday, startIso: isoStart(startDate), endIso: isoEnd(endToday) };
+    return periodRange(preset, startDate, endToday);
   }
   if (preset === "last14") {
     const startDate = dateKey(shiftDays(today, -13));
-    return { preset, startDate, endDate: endToday, startIso: isoStart(startDate), endIso: isoEnd(endToday) };
+    return periodRange(preset, startDate, endToday);
   }
   if (preset === "last30") {
     const startDate = dateKey(shiftDays(today, -29));
-    return { preset, startDate, endDate: endToday, startIso: isoStart(startDate), endIso: isoEnd(endToday) };
+    return periodRange(preset, startDate, endToday);
   }
   if (preset === "thisMonth") {
     const startDate = dateKey(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)));
-    return { preset, startDate, endDate: endToday, startIso: isoStart(startDate), endIso: isoEnd(endToday) };
+    return periodRange(preset, startDate, endToday);
   }
 
   const startDate = custom.startDate || endToday;
   const endDate = custom.endDate || endToday;
+  return periodRange(preset || "custom", startDate, endDate);
+}
+
+function periodRange(preset, startDate, endDate) {
   return {
-    preset: preset || "custom",
+    preset,
     startDate,
     endDate,
     startIso: isoStart(startDate),
-    endIso: isoEnd(endDate)
+    endIso: isoEnd(endDate),
+    endExclusiveIso: isoEndExclusive(endDate)
   };
 }
 
@@ -72,3 +77,11 @@ function isoStart(dateKeyValue) {
 function isoEnd(dateKeyValue) {
   return `${dateKeyValue}T23:59:59.999Z`;
 }
+
+function isoEndExclusive(dateKeyValue) {
+  const date = new Date(`${dateKeyValue}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString();
+}
+
+export { isoEndExclusive };
