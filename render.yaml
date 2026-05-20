@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: fanvue-revenue-dashboard
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: AUTO_SYNC
+        value: true
+      - key: DASHBOARD_SECRET
+        generateValue: true
+      - key: DASHBOARD_PASSWORD
+        generateValue: true
+      - key: DASHBOARD_USER
+        value: owner
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: FANVUE_CLIENT_ID
+        sync: false
+      - key: FANVUE_CLIENT_SECRET
+        sync: false
+      - key: FANVUE_REDIRECT_URI
+        sync: false
+      - key: FANVUE_SCOPES
+        value: openid offline_access offline read:self read:insights
+      - key: FANVUE_API_VERSION
+        value: "2025-06-26"
+      - key: FANVUE_API_BASE_URL
+        value: https://api.fanvue.com
+      - key: FANVUE_METRICS_ENDPOINT
+        value: /insights/earnings/summary

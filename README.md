@@ -63,12 +63,20 @@ It also stores subscriber, message, tip, and click fields if the API returns the
 
 If the API returns a different shape, update `src/connector.js`. This is isolated so changing a connector does not require UI changes.
 
+## Deploy online (phone + Supabase)
+
+See **[DEPLOY.md](./DEPLOY.md)** for step-by-step setup:
+
+- **Supabase** — Postgres storage for models, encrypted Fanvue tokens, and revenue snapshots
+- **Render** — HTTPS Node host so you can open the dashboard on your phone and complete Fanvue OAuth
+
 ## Production notes
 
 - Set `DASHBOARD_SECRET` before deploying. In production the server refuses to boot without it because Fanvue OAuth tokens are encrypted at rest.
 - Set `DASHBOARD_PASSWORD` before deploying. In production the server refuses to boot without it because the dashboard contains private revenue data.
-- The current storage is a local JSON file, which is fine for a small internal tracker on one server. Move to Postgres before multi-user usage, high sync volume, or multiple server instances.
-- Host on a simple long-running Node runtime such as Render, Railway, Fly.io, or a VPS. Do not deploy the current JSON-file version to Vercel as the primary production app because serverless functions do not provide durable app storage.
+- Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` for production so data survives deploys and works from one URL on any device.
+- Without Supabase env vars, the app falls back to local `data/store.json` (fine for local dev only).
+- Host on a long-running Node runtime such as Render, Railway, or Fly.io. Do not use Vercel serverless as the primary app host.
 - Monitor `/api/health` and watch sync failures in the dashboard. Real production should also ship logs to the hosting provider.
 
 ## Failure points

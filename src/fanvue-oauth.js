@@ -1,14 +1,13 @@
 import crypto from "node:crypto";
 import { decryptSecret, encryptSecret } from "./crypto.js";
+import { consumeOAuthState, saveOAuthState } from "./oauth-state.js";
 
 const AUTHORIZATION_URL = "https://auth.fanvue.com/oauth2/auth";
 const TOKEN_URL = "https://auth.fanvue.com/oauth2/token";
 const DEFAULT_FANVUE_API_BASE_URL = "https://api.fanvue.com";
 const DEFAULT_FANVUE_METRICS_ENDPOINT = "/insights/earnings/summary";
-const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
-const pendingStates = new Map();
 let refreshPromiseByModelId = new Map();
 
 export function getFanvueOAuthStatus() {
@@ -39,17 +38,17 @@ export function requireFanvueOAuthConfig() {
   return status;
 }
 
-export function createFanvueAuthorizationUrl(modelId) {
+export async function createFanvueAuthorizationUrl(modelId) {
   const status = requireFanvueOAuthConfig();
   const codeVerifier = base64Url(crypto.randomBytes(32));
   const codeChallenge = base64Url(crypto.createHash("sha256").update(codeVerifier).digest());
   const state = base64Url(crypto.randomBytes(32));
 
-  pendingStates.set(state, {
+  await saveOAuthState({
+    state,
     modelId,
     codeVerifier,
-    redirectUri: status.redirectUri,
-    expiresAt: Date.now() + OAUTH_STATE_TTL_MS
+    redirectUri: status.redirectUri
   });
 
   const authUrl = new URL(AUTHORIZATION_URL);
@@ -76,12 +75,8 @@ export async function completeFanvueOAuth(store, callbackUrl) {
   const state = url.searchParams.get("state");
   if (!code || !state) throw httpError(400, "Fanvue callback is missing code or state.");
 
-  const pending = pendingStates.get(state);
-  if (!pending) throw httpError(400, "Fanvue OAuth state was not found. Start the connection again.");
-  if (pending.expiresAt < Date.now()) {
-    pendingStates.delete(state);
-    throw httpError(400, "Fanvue OAuth state expired. Start the connection again.");
-  }
+  const pending = await consumeOAuthState(state);
+  if (!pending) throw httpError(400, "Fanvue OAuth state was not found or expired. Start the connection again.");
 
   const tokens = await exchangeToken({
     grant_type: "authorization_code",
@@ -89,7 +84,6 @@ export async function completeFanvueOAuth(store, callbackUrl) {
     redirect_uri: pending.redirectUri,
     code_verifier: pending.codeVerifier
   });
-  pendingStates.delete(state);
 
   let profile = null;
   try {

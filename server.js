@@ -12,7 +12,7 @@ import {
   disconnectFanvueOAuth,
   getFanvueOAuthStatus
 } from "./src/fanvue-oauth.js";
-import { JsonStore } from "./src/store.js";
+import { createStore, storageMode } from "./src/create-store.js";
 import { buildSummary, modelFromInput, modelHasConnection, sanitizeModel, syncDueModels, syncModel, testModelConnection } from "./src/sync.js";
 
 loadDotEnv();
@@ -22,9 +22,9 @@ assertAccessConfiguration();
 const MAX_JSON_BODY_BYTES = 64 * 1024;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
-const store = new JsonStore();
+const store = createStore();
 const port = Number(process.env.PORT || 4000);
-const host = process.env.HOST || "127.0.0.1";
+const host = process.env.HOST || (process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
 const dashboardUser = process.env.DASHBOARD_USER || "owner";
 const dashboardPassword = process.env.DASHBOARD_PASSWORD || "";
 
@@ -48,7 +48,8 @@ const requestHandler = async (request, response) => {
 
 const server = http.createServer(requestHandler);
 server.listen(port, host, () => {
-  console.log(`Fanvue API Tracker running at http://${host}:${port}`);
+  const publicHost = host === "0.0.0.0" ? "localhost" : host;
+  console.log(`Fanvue API Tracker running at http://${publicHost}:${port} (storage: ${storageMode()})`);
 });
 
 startHttpsServer().catch((error) => {
@@ -84,6 +85,7 @@ async function handleApi(request, response, url) {
     sendJson(response, 200, {
       ok: true,
       now: new Date().toISOString(),
+      storage: storageMode(),
       fanvueOAuthConfigured: getFanvueOAuthStatus().configured
     });
     return;
@@ -171,7 +173,7 @@ async function handleApi(request, response, url) {
     const model = db.models.find((item) => item.id === modelId);
     if (!model) throw httpError(404, "Model was not found.");
 
-    const authorizationUrl = createFanvueAuthorizationUrl(modelId);
+    const authorizationUrl = await createFanvueAuthorizationUrl(modelId);
     sendJson(response, 200, { authorizationUrl });
     return;
   }

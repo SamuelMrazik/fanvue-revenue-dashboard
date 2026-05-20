@@ -11,5 +11,8 @@
     "dev": "node --watch server.js",
     "start": "node server.js",
     "test": "node --test"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.8"
   }
 }
