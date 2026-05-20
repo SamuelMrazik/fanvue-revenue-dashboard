@@ -1,4 +1,9 @@
-import { fanvueApiPaginate, fanvueApiRequest, creatorUuidFromModel } from "./fanvue-api.js";
+import {
+  creatorUuidFromModel,
+  fanvueApiPaginate,
+  fanvueApiRequest,
+  isFanvueNotFound
+} from "./fanvue-api.js";
 
 export async function fetchModelVault(accessToken, model) {
   const creatorUuid = creatorUuidFromModel(model);
@@ -19,7 +24,18 @@ export async function fetchModelVault(accessToken, model) {
       lastError = error;
     }
   }
-  if (!folders.length && lastError) throw lastError;
+  if (!folders.length && lastError) {
+    if (isFanvueNotFound(lastError)) {
+      return {
+        creatorUuid,
+        folderCount: 0,
+        mediaCount: 0,
+        folders: [],
+        warning: "Vault endpoint not available for this Fanvue account. Reconnect with read:creator and read:media scopes."
+      };
+    }
+    throw lastError;
+  }
 
   const enrichedFolders = [];
   for (const folder of folders) {
@@ -55,16 +71,16 @@ export async function fetchModelPosts(accessToken, model) {
   if (!creatorUuid) throw new Error("Connect Fanvue to load posts.");
 
   const postCandidates = [
-    `/creators/${creatorUuid}/posts`,
-    `/posts`
+    { path: "/posts", query: { includeUnpublished: true, size: 50 } },
+    { path: `/creators/${creatorUuid}/posts`, query: { includeUnpublished: true, size: 50 } }
   ];
 
   let posts = [];
   let lastError = null;
-  for (const path of postCandidates) {
+  for (const candidate of postCandidates) {
     try {
-      posts = await fanvueApiPaginate(accessToken, path, {
-        query: path === "/posts" ? { creatorUserUuid: creatorUuid } : undefined,
+      posts = await fanvueApiPaginate(accessToken, candidate.path, {
+        query: candidate.query,
         listKeys: ["posts"]
       });
       if (posts.length) break;
@@ -72,7 +88,18 @@ export async function fetchModelPosts(accessToken, model) {
       lastError = error;
     }
   }
-  if (!posts.length && lastError) throw lastError;
+  if (!posts.length && lastError) {
+    if (isFanvueNotFound(lastError)) {
+      return {
+        creatorUuid,
+        total: 0,
+        counts: {},
+        posts: [],
+        warning: "Posts endpoint not available. Reconnect Fanvue with read:post scope, then sync again."
+      };
+    }
+    throw lastError;
+  }
 
   const normalized = posts.map(normalizePost).sort((a, b) => {
     const left = new Date(b.publishedAt || b.createdAt || 0).getTime();

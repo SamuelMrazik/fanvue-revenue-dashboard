@@ -1082,6 +1082,11 @@ function renderVaultPanel(model, payload) {
     return;
   }
   elements.vaultSubtitle.textContent = `${payload.folderCount} folders · ${payload.mediaCount} media items`;
+  if (payload.warning) {
+    elements.vaultContent.innerHTML = `<div class="chart-empty compact-empty">${escapeHtml(payload.warning)}</div>`;
+    return;
+  }
+
   elements.vaultContent.innerHTML = payload.folders.map((folder) => `
     <article class="content-card">
       <header>
@@ -1107,6 +1112,12 @@ function renderPostsPanel(model, payload) {
     return;
   }
   const counts = payload.counts || {};
+  if (payload.warning) {
+    elements.postsSubtitle.textContent = payload.warning;
+    elements.postsRows.innerHTML = `<tr><td colspan="5">${escapeHtml(payload.warning)}</td></tr>`;
+    return;
+  }
+
   elements.postsSubtitle.textContent = `${payload.total} posts · ${counts.published || 0} published · ${counts.scheduled || 0} scheduled · ${counts.draft || 0} draft`;
   elements.postsRows.innerHTML = payload.posts.map((post) => `
     <tr>

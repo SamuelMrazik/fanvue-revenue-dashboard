@@ -37,10 +37,15 @@ const host = process.env.HOST || (process.env.NODE_ENV === "production" ? "0.0.0
 const dashboardUser = process.env.DASHBOARD_USER || "owner";
 const dashboardPassword = process.env.DASHBOARD_PASSWORD || "";
 
+function isPublicPath(pathname) {
+  return pathname === "/api/health" || pathname === "/api/fanvue/callback";
+}
+
 const requestHandler = async (request, response) => {
+  const url = new URL(request.url, `http://${request.headers.host}`);
+
   try {
-    const url = new URL(request.url, `http://${request.headers.host}`);
-    if (!isAuthorized(request)) {
+    if (!isPublicPath(url.pathname) && !isAuthorized(request)) {
       requestAuthorization(response);
       return;
     }
@@ -51,7 +56,12 @@ const requestHandler = async (request, response) => {
     }
     await serveStatic(response, url.pathname);
   } catch (error) {
-    sendJson(response, error.statusCode || 500, { error: error.message || "Unexpected server error" });
+    if (url.pathname.startsWith("/api/")) {
+      sendJson(response, error.statusCode || 500, { error: error.message || "Unexpected server error" });
+      return;
+    }
+    response.writeHead(error.statusCode || 500, { "content-type": "text/plain; charset=utf-8" });
+    response.end(error.message || "Unexpected server error");
   }
 };
 
