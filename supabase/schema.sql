@@ -36,3 +36,9 @@ create table if not exists tracker_oauth_states (
 
 create index if not exists tracker_oauth_states_expires_idx
   on tracker_oauth_states (expires_at);
+
+create table if not exists tracker_meta (
+  id text primary key,
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);

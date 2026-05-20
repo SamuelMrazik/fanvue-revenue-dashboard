@@ -14,6 +14,16 @@ import {
 } from "./src/fanvue-oauth.js";
 import { createStore, storageMode } from "./src/create-store.js";
 import {
+  createContentRequest,
+  createDriveLink,
+  deleteDriveLink,
+  listContentRequests,
+  listDriveLinks,
+  updateContentRequest,
+  updateDriveLink
+} from "./src/ops.js";
+import { normalizeSettings, updateSettings } from "./src/settings.js";
+import {
   buildSummary,
   loadModelContent,
   modelFromInput,
@@ -21,7 +31,8 @@ import {
   sanitizeModel,
   syncDueModels,
   syncModel,
-  testModelConnection
+  testModelConnection,
+  ValidationError
 } from "./src/sync.js";
 
 loadDotEnv();
@@ -57,7 +68,8 @@ const requestHandler = async (request, response) => {
     await serveStatic(response, url.pathname);
   } catch (error) {
     if (url.pathname.startsWith("/api/")) {
-      sendJson(response, error.statusCode || 500, { error: error.message || "Unexpected server error" });
+      const statusCode = error.statusCode || (error instanceof ValidationError ? 400 : 500);
+      sendJson(response, statusCode, { error: error.message || "Unexpected server error" });
       return;
     }
     response.writeHead(error.statusCode || 500, { "content-type": "text/plain; charset=utf-8" });
@@ -215,6 +227,70 @@ async function handleApi(request, response, url) {
   if (contentRoute && request.method === "GET") {
     const payload = await loadModelContent(store, contentRoute[1], contentRoute[2]);
     sendJson(response, 200, payload);
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/settings") {
+    const db = await store.read();
+    sendJson(response, 200, normalizeSettings(db));
+    return;
+  }
+
+  if (request.method === "PATCH" && url.pathname === "/api/settings") {
+    const body = await readJson(request);
+    const updated = await store.update((db) => updateSettings(db, body));
+    sendJson(response, 200, updated);
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/content-requests") {
+    const db = await store.read();
+    const modelId = url.searchParams.get("modelId") || undefined;
+    const status = url.searchParams.get("status") || undefined;
+    sendJson(response, 200, listContentRequests(db, { modelId, status }));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/content-requests") {
+    const body = await readJson(request);
+    const created = await store.update((db) => createContentRequest(db, body));
+    sendJson(response, 201, created);
+    return;
+  }
+
+  const requestRoute = url.pathname.match(/^\/api\/content-requests\/([^/]+)$/);
+  if (requestRoute && request.method === "PATCH") {
+    const body = await readJson(request);
+    const updated = await store.update((db) => updateContentRequest(db, requestRoute[1], body));
+    sendJson(response, 200, updated);
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/drive-links") {
+    const db = await store.read();
+    const modelId = url.searchParams.get("modelId") || undefined;
+    sendJson(response, 200, listDriveLinks(db, { modelId }));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/drive-links") {
+    const body = await readJson(request);
+    const created = await store.update((db) => createDriveLink(db, body));
+    sendJson(response, 201, created);
+    return;
+  }
+
+  const driveRoute = url.pathname.match(/^\/api\/drive-links\/([^/]+)$/);
+  if (driveRoute && request.method === "PATCH") {
+    const body = await readJson(request);
+    const updated = await store.update((db) => updateDriveLink(db, driveRoute[1], body));
+    sendJson(response, 200, updated);
+    return;
+  }
+
+  if (driveRoute && request.method === "DELETE") {
+    await store.update((db) => deleteDriveLink(db, driveRoute[1]));
+    sendJson(response, 200, { ok: true });
     return;
   }
 

@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
+    "seed:demo": "node scripts/seed-demo-data.js",
     "test": "node --test"
   },
   "dependencies": {

@@ -3,6 +3,8 @@ import { fetchFanvueMetrics } from "./connector.js";
 import { fetchModelAudienceSummary, fetchModelPosts, fetchModelTrackingSummary, fetchModelVault } from "./fanvue-content.js";
 import { getFanvueAccessToken, sanitizeFanvueOAuth } from "./fanvue-oauth.js";
 import { periodBounds } from "./periods.js";
+import { countOpenRequests, ensureOpsCollections } from "./ops.js";
+import { autoSyncIntervalMinutes, normalizeSettings } from "./settings.js";
 import { createId, trimDb } from "./store.js";
 
 const DEFAULT_FANVUE_API_BASE_URL = "https://api.fanvue.com";
@@ -104,12 +106,21 @@ export function buildSummary(db) {
     if (model.lastStatus === "ok") totals.okModels += 1;
   }
 
+  ensureOpsCollections(db);
+  const settings = normalizeSettings(db);
+
   return {
     generatedAt: new Date().toISOString(),
     models: db.models.map(sanitizeModel),
     snapshots: db.snapshots.map(sanitizeSnapshot),
     syncLogs: db.syncLogs.map(sanitizeSyncLog),
-    totals
+    contentRequests: db.contentRequests,
+    driveLinks: db.driveLinks,
+    settings,
+    totals: {
+      ...totals,
+      openVaRequests: countOpenRequests(db)
+    }
   };
 }
 
@@ -232,7 +243,8 @@ export async function syncModel(store, modelId) {
       if (!nextModel) throw new Error("Model was removed before sync completed.");
       const finishedAt = new Date().toISOString();
       nextModel.lastSyncAt = finishedAt;
-      nextModel.nextSyncAt = nextSyncTime(nextModel.syncIntervalMinutes, finishedAt);
+      const interval = autoSyncIntervalMinutes(nextDb) ?? nextModel.syncIntervalMinutes;
+      nextModel.nextSyncAt = nextSyncTime(interval, finishedAt);
       nextModel.lastStatus = "ok";
       nextModel.lastError = "";
       nextModel.updatedAt = finishedAt;
@@ -256,7 +268,8 @@ export async function syncModel(store, modelId) {
       if (!nextModel) return;
       const finishedAt = new Date().toISOString();
       nextModel.lastSyncAt = finishedAt;
-      nextModel.nextSyncAt = nextSyncTime(nextModel.syncIntervalMinutes, finishedAt);
+      const interval = autoSyncIntervalMinutes(nextDb) ?? nextModel.syncIntervalMinutes;
+      nextModel.nextSyncAt = nextSyncTime(interval, finishedAt);
       nextModel.lastStatus = "error";
       nextModel.lastError = error.message;
       nextModel.updatedAt = finishedAt;
@@ -286,6 +299,9 @@ export async function testModelConnection(store, modelId) {
 
 export async function syncDueModels(store) {
   const db = await store.read();
+  const intervalMinutes = autoSyncIntervalMinutes(db);
+  if (!intervalMinutes) return [];
+
   const now = Date.now();
   const dueModels = db.models.filter((model) => {
     if (!model.enabled) return false;

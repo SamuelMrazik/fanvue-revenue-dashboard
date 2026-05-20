@@ -22,7 +22,7 @@ export class SupabaseStore {
   }
 
   async read() {
-    const [modelsResult, snapshotsResult, logsResult] = await Promise.all([
+    const [modelsResult, snapshotsResult, logsResult, metaResult] = await Promise.all([
       this.client.from("tracker_models").select("data"),
       this.client
         .from("tracker_snapshots")
@@ -33,18 +33,27 @@ export class SupabaseStore {
         .from("tracker_sync_logs")
         .select("data")
         .order("created_at", { ascending: false })
-        .limit(SYNC_LOG_LIMIT)
+        .limit(SYNC_LOG_LIMIT),
+      this.client.from("tracker_meta").select("data").eq("id", "ops").maybeSingle()
     ]);
 
     for (const result of [modelsResult, snapshotsResult, logsResult]) {
       if (result.error) throw new Error(result.error.message);
     }
+    if (metaResult.error && metaResult.error.code !== "PGRST116") {
+      throw new Error(metaResult.error.message);
+    }
+
+    const meta = metaResult.data?.data || {};
 
     return normalizeDb({
       version: 1,
       models: modelsResult.data.map((row) => row.data),
       snapshots: snapshotsResult.data.map((row) => row.data).reverse(),
-      syncLogs: logsResult.data.map((row) => row.data).reverse()
+      syncLogs: logsResult.data.map((row) => row.data).reverse(),
+      contentRequests: meta.contentRequests,
+      driveLinks: meta.driveLinks,
+      settings: meta.settings
     });
   }
 
@@ -90,6 +99,17 @@ export class SupabaseStore {
       created_at: log.finishedAt || log.startedAt || new Date().toISOString(),
       data: log
     }));
+
+    const upsertMeta = await this.client.from("tracker_meta").upsert({
+      id: "ops",
+      data: {
+        contentRequests: normalized.contentRequests,
+        driveLinks: normalized.driveLinks,
+        settings: normalized.settings
+      },
+      updated_at: new Date().toISOString()
+    }, { onConflict: "id" });
+    if (upsertMeta.error) throw new Error(upsertMeta.error.message);
   }
 
   async replaceChildRows(table, rows, mapper) {

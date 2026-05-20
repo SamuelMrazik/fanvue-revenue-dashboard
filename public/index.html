@@ -15,26 +15,38 @@
           </div>
         </div>
 
-        <button class="overview-item active" id="overviewButton" type="button">
-          <strong>All models</strong>
-          <span>Combined dashboard</span>
-        </button>
+        <nav class="sidebar-nav" aria-label="Main navigation">
+          <button class="overview-item active" id="overviewButton" type="button">
+            <strong>Dashboard</strong>
+          </button>
+        </nav>
 
-        <button class="primary-action" id="addModelButton" type="button">
-          <span class="button-icon">+</span>
-          Add Fanvue model
-        </button>
+        <div class="sidebar-scroll">
+          <div class="sidebar-section sidebar-models">
+            <div class="section-label" id="modelsSectionLabel">Models (0)</div>
+            <nav class="model-list" id="modelList" aria-label="Models"></nav>
+          </div>
+        </div>
 
-        <div class="sidebar-section">
-          <div class="section-label">Models</div>
-          <nav class="model-list" id="modelList" aria-label="Models"></nav>
+        <div class="sidebar-footer">
+          <button class="overview-item" id="contentDriveButton" type="button">
+            <strong>Content Drive</strong>
+            <span id="contentDriveNavCount">0 open requests</span>
+          </button>
+          <button class="overview-item settings-item" id="settingsButton" type="button">
+            <strong>Settings</strong>
+          </button>
+          <button class="primary-action" id="addModelButton" type="button">
+            <span class="button-icon">+</span>
+            Add Fanvue model
+          </button>
         </div>
       </aside>
 
       <main class="workspace">
         <header class="topbar">
           <div>
-            <h1 id="pageTitle">All models</h1>
+            <h1 id="pageTitle">Dashboard</h1>
             <p id="syncSummary">Loading sync state...</p>
           </div>
           <div class="topbar-actions">
@@ -82,9 +94,9 @@
             </label>
           </section>
 
-          <section class="overview-hero overview-hero-grid" aria-label="Combined revenue overview">
+          <section class="overview-hero overview-hero-grid overview-hero-compact" aria-label="Combined revenue overview">
             <article class="hero-metric">
-              <span id="primaryMetricLabel">Combined owner net</span>
+              <span>Owner net</span>
               <strong id="primaryMetricValue">$0</strong>
               <small id="primaryMetricSubtext">Selected period</small>
             </article>
@@ -94,25 +106,20 @@
               <small>Before platform fee</small>
             </article>
             <article>
-              <span>Fanvue net</span>
-              <strong id="overviewFanvueNet">$0</strong>
-              <small>After platform fee</small>
-            </article>
-            <article>
               <span>Agency due</span>
               <strong id="overviewAgencyDue">$0</strong>
               <small>30% chatting agency</small>
             </article>
-            <article>
-              <span>External link rev.</span>
-              <strong id="overviewExternalRevenue">$0</strong>
-              <small>From tracking links</small>
-            </article>
-            <article>
-              <span>Connected</span>
-              <strong id="overviewHealth">0/0</strong>
-              <small>Models ready to sync</small>
-            </article>
+          </section>
+
+          <section class="va-requests-strip" id="vaRequestsStrip" hidden>
+            <button class="va-requests-button" id="vaRequestsStripButton" type="button">
+              <span class="va-requests-count" id="openVaRequestsCount">0</span>
+              <span class="va-requests-copy">
+                <strong>Open VA requests</strong>
+                <small>Tap to open Content Drive</small>
+              </span>
+            </button>
           </section>
 
           <section class="panel comparison-panel">
@@ -128,21 +135,14 @@
                   <button class="pill-button" type="button" data-comparison-period="last30">30d</button>
                   <button class="pill-button" type="button" data-comparison-period="allTime">All time</button>
                 </div>
-                <label class="compact-select">
-                  Metric
-                  <select id="comparisonMetricInput">
-                    <option value="ownerNet">Owner net</option>
-                    <option value="gross">Gross revenue</option>
-                    <option value="fanvueNet">Fanvue net</option>
-                    <option value="subscribers">New subscribers</option>
-                    <option value="followers">New followers</option>
-                    <option value="externalRevenue">External revenue</option>
-                  </select>
-                </label>
+                <div class="pill-group" id="comparisonMetricPills" role="group" aria-label="Chart metric">
+                  <button class="pill-button active" type="button" data-comparison-metric="ownerNet">Net</button>
+                  <button class="pill-button" type="button" data-comparison-metric="gross">Gross</button>
+                </div>
               </div>
             </div>
-            <div class="chart-wrap comparison-chart" id="comparisonChart"></div>
-            <div class="chart-legend" id="comparisonLegend"></div>
+            <div class="chart-wrap comparison-chart" id="comparisonChart" data-chart-context="dashboard-comparison"></div>
+            <div class="chart-model-toggles" id="chartModelToggles" aria-label="Models on chart"></div>
           </section>
 
           <section class="panel table-panel">
@@ -157,15 +157,12 @@
                 <thead>
                   <tr>
                     <th>Model</th>
-                    <th>Gross</th>
-                    <th>Net</th>
                     <th>Owner net</th>
                     <th>New subs</th>
-                    <th>New followers</th>
                     <th>Internal</th>
-                    <th>External</th>
+                    <th>Traffic ext</th>
                     <th>Ext. revenue</th>
-                    <th>Status</th>
+                    <th>Requests</th>
                   </tr>
                 </thead>
                 <tbody id="modelPerformanceRows"></tbody>
@@ -173,61 +170,97 @@
             </div>
           </section>
 
-          <section class="overview-grid">
-            <section class="panel">
-              <div class="panel-header compact">
-                <div>
-                  <h2>Tracking links</h2>
-                  <p id="trackingLinksSubtitle">Per-link performance from Fanvue</p>
+          <section class="panel traffic-panel">
+            <div class="panel-header compact">
+              <div>
+                <h2>Traffic &amp; profitability</h2>
+                <p id="trafficPanelSubtitle">Most profitable links across models</p>
+              </div>
+              <div class="traffic-filters">
+                <label class="compact-select">
+                  Model
+                  <select id="trafficModelFilter">
+                    <option value="">All models</option>
+                  </select>
+                </label>
+                <div class="pill-group" id="trafficMetricPills" role="group" aria-label="Traffic metric">
+                  <button class="pill-button active" type="button" data-traffic-metric="both">Both</button>
+                  <button class="pill-button" type="button" data-traffic-metric="subscribers">Subs</button>
+                  <button class="pill-button" type="button" data-traffic-metric="followers">Followers</button>
                 </div>
               </div>
-              <div class="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Model</th>
-                      <th>Link</th>
-                      <th>Channel</th>
-                      <th>Clicks</th>
-                      <th>Subs</th>
-                      <th>Followers</th>
-                      <th>Net revenue</th>
-                    </tr>
-                  </thead>
-                  <tbody id="trackingLinksRows"></tbody>
-                </table>
-              </div>
-            </section>
+            </div>
+            <div class="table-scroll wide-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>Link</th>
+                    <th>Channel</th>
+                    <th>Traffic</th>
+                    <th>Subs revenue</th>
+                    <th>Owner net share</th>
+                  </tr>
+                </thead>
+                <tbody id="trafficProfitRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
 
-            <section class="panel payout-panel">
-              <div class="panel-header compact">
-                <div>
-                  <h2>Agency payouts</h2>
-                  <p>30% of Fanvue net, split by pay date</p>
-                </div>
+        <section class="view" id="settingsView" hidden>
+          <section class="panel settings-panel">
+            <div class="panel-header compact">
+              <div>
+                <h2>Settings</h2>
+                <p>Workspace preferences</p>
               </div>
-              <div class="payout-summary" id="payoutSummary"></div>
-              <div class="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Model</th>
-                      <th>15th</th>
-                      <th>27th</th>
-                    </tr>
-                  </thead>
-                  <tbody id="agencyPayoutRows"></tbody>
-                </table>
+            </div>
+            <form class="settings-form" id="settingsForm">
+              <fieldset class="settings-group">
+                <legend>Automatic sync</legend>
+                <label class="toggle-label settings-toggle">
+                  <input id="autoSyncEnabledInput" type="checkbox" checked>
+                  Enable automatic sync for connected models
+                </label>
+                <label class="settings-interval">
+                  Sync every
+                  <input id="autoSyncIntervalInput" type="number" min="5" step="5" value="60">
+                  minutes
+                </label>
+                <p class="form-note">The server checks every minute and syncs models when their next run is due.</p>
+              </fieldset>
+              <div class="modal-actions settings-actions">
+                <button class="solid-button" type="submit">Save settings</button>
               </div>
-            </section>
+              <p class="form-error" id="settingsFormError"></p>
+            </form>
+          </section>
+        </section>
+
+        <section class="view" id="contentDriveView" hidden>
+          <section class="panel">
+            <div class="panel-header compact">
+              <div>
+                <h2>VA requests</h2>
+                <p id="contentDriveSubtitle">Open queue from your VAs</p>
+              </div>
+              <button class="solid-button" id="addVaRequestButton" type="button">Add request</button>
+            </div>
+            <div class="request-list" id="contentDriveRequests"></div>
           </section>
         </section>
 
         <section class="view" id="modelView" hidden>
+          <header class="model-profile-header" id="modelProfileHeader"></header>
+
           <div class="model-tabs" role="tablist" aria-label="Model sections">
             <button class="model-tab active" type="button" data-model-tab="overview">Overview</button>
+            <button class="model-tab" type="button" data-model-tab="traffic">Traffic &amp; links</button>
+            <button class="model-tab" type="button" data-model-tab="content">Content Generations</button>
             <button class="model-tab" type="button" data-model-tab="vault">Vault</button>
             <button class="model-tab" type="button" data-model-tab="posts">Posts</button>
+            <button class="model-tab" type="button" data-model-tab="connection">Connection</button>
           </div>
 
           <section class="model-tab-panel active" id="modelTabOverview">
@@ -260,9 +293,8 @@
                 <h2 id="modelChartTitle">Daily revenue</h2>
                 <p id="modelChartSubtitle">Selected period</p>
               </div>
-              <button class="ghost-button" id="syncSelectedButton" type="button">Sync now</button>
             </div>
-            <div class="chart-wrap" id="modelChart"></div>
+            <div class="chart-wrap model-chart-wrap" id="modelChart" data-chart-context="model-revenue"></div>
           </section>
 
           <section class="overview-grid">
@@ -283,8 +315,8 @@
                   <p>No sync internals, just daily performance</p>
                 </div>
               </div>
-              <div class="table-scroll">
-                <table>
+              <div class="table-scroll daily-table-wrap">
+                <table class="daily-earnings-table">
                   <thead>
                     <tr>
                       <th>Date</th>
@@ -299,44 +331,109 @@
             </section>
           </section>
 
-          <section class="panel table-panel">
-            <div class="panel-header compact">
-              <div>
-                <h2>Sync history</h2>
-                <p>Recent connector runs and failures</p>
-              </div>
-            </div>
-            <div class="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>Model</th>
-                    <th>Status</th>
-                    <th>Result</th>
-                  </tr>
-                </thead>
-                <tbody id="syncLogRows"></tbody>
-              </table>
-            </div>
           </section>
 
-          <section class="panel connection-panel">
-            <div class="panel-header compact">
-              <div>
-                <h2>Connection</h2>
-                <p id="connectionStatus">No model selected</p>
+          <section class="model-tab-panel" id="modelTabTraffic" hidden>
+            <section class="panel table-panel">
+              <div class="panel-header compact">
+                <div>
+                  <h2>Tracking links</h2>
+                  <p id="modelTrackingSubtitle">External vs Fanvue-reported traffic</p>
+                </div>
+                <div class="pill-group" id="modelTrafficMetricPills" role="group" aria-label="Traffic metric">
+                  <button class="pill-button active" type="button" data-model-traffic-metric="both">Both</button>
+                  <button class="pill-button" type="button" data-model-traffic-metric="subscribers">Subs</button>
+                  <button class="pill-button" type="button" data-model-traffic-metric="followers">Followers</button>
+                </div>
               </div>
-              <button class="ghost-button" id="editModelButton" type="button">Edit</button>
-            </div>
-            <dl class="connection-list" id="connectionDetails"></dl>
-            <div class="button-row">
-              <button class="solid-button" id="connectFanvueButton" type="button">Connect Fanvue</button>
-              <button class="ghost-button" id="disconnectFanvueButton" type="button">Disconnect Fanvue</button>
-              <button class="ghost-button" id="testConnectionButton" type="button">Test</button>
-              <button class="danger-button" id="deleteModelButton" type="button">Delete</button>
-            </div>
+              <div class="traffic-split-cards" id="modelTrafficSplit"></div>
+              <section class="panel internal-traffic-chart-panel">
+                <div class="panel-header compact">
+                  <div>
+                    <h3>Internal traffic by day</h3>
+                    <p id="internalTrafficChartSubtitle">Estimated internal traffic from Fanvue insights</p>
+                  </div>
+                </div>
+                <div class="chart-wrap internal-traffic-chart" id="internalTrafficChart" data-chart-context="model-internal-traffic"></div>
+              </section>
+              <div class="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Link</th>
+                      <th>Channel</th>
+                      <th>Traffic</th>
+                      <th>Subs revenue</th>
+                    </tr>
+                  </thead>
+                  <tbody id="modelTrackingRows"></tbody>
+                </table>
+              </div>
+            </section>
           </section>
+
+          <section class="model-tab-panel" id="modelTabContent" hidden>
+            <section class="panel">
+              <div class="panel-header compact">
+                <div>
+                  <h2>Content Generations</h2>
+                  <p id="modelContentSubtitle">VA requests and Google Drive links</p>
+                </div>
+                <button class="ghost-button" id="addModelVaRequestButton" type="button">Add request</button>
+              </div>
+              <div class="content-gen-summary" id="modelContentSummary"></div>
+              <div class="request-list" id="modelContentRequests"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-header compact">
+                <div>
+                  <h2>Google Drive</h2>
+                  <p>Named folders and reference links for this model</p>
+                </div>
+                <button class="ghost-button" id="addDriveLinkButton" type="button">Add link</button>
+              </div>
+              <div class="drive-link-list" id="modelDriveLinks"></div>
+            </section>
+          </section>
+
+          <section class="model-tab-panel" id="modelTabConnection" hidden>
+            <section class="panel connection-panel">
+              <div class="panel-header compact">
+                <div>
+                  <h2>Connection</h2>
+                  <p id="connectionStatus">No model selected</p>
+                </div>
+                <button class="ghost-button" id="editModelButton" type="button">Edit</button>
+              </div>
+              <dl class="connection-list" id="connectionDetails"></dl>
+              <div class="button-row">
+                <button class="solid-button" id="connectFanvueButton" type="button">Connect Fanvue</button>
+                <button class="ghost-button" id="disconnectFanvueButton" type="button">Disconnect Fanvue</button>
+                <button class="ghost-button" id="syncSelectedButton" type="button">Sync now</button>
+                <button class="ghost-button" id="testConnectionButton" type="button">Test</button>
+                <button class="danger-button" id="deleteModelButton" type="button">Delete</button>
+              </div>
+            </section>
+            <section class="panel table-panel">
+              <div class="panel-header compact">
+                <div>
+                  <h2>Sync history</h2>
+                  <p>Recent connector runs and failures</p>
+                </div>
+              </div>
+              <div class="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Status</th>
+                      <th>Result</th>
+                    </tr>
+                  </thead>
+                  <tbody id="syncLogRows"></tbody>
+                </table>
+              </div>
+            </section>
           </section>
 
           <section class="model-tab-panel" id="modelTabVault" hidden>
@@ -432,7 +529,70 @@
       </form>
     </dialog>
 
+    <dialog class="modal va-request-modal" id="vaRequestDialog">
+      <form method="dialog" class="model-form va-request-form" id="vaRequestForm">
+        <div class="modal-header">
+          <div>
+            <h2 id="vaRequestFormTitle">New VA request</h2>
+            <p>Send clear instructions to your VA team.</p>
+          </div>
+          <button class="icon-button" id="closeVaRequestButton" type="button" aria-label="Close">x</button>
+        </div>
+        <label>
+          Model
+          <select id="vaRequestModelInput" required></select>
+        </label>
+        <label>
+          Urgency
+          <select id="vaRequestUrgencyInput">
+            <option value="high">High — needed today</option>
+            <option value="medium" selected>Medium — this week</option>
+            <option value="low">Low — when available</option>
+          </select>
+        </label>
+        <label>
+          Brief
+          <textarea id="vaRequestDescriptionInput" rows="5" placeholder="What should be created, style notes, deadlines, links…" required></textarea>
+        </label>
+        <p class="form-error" id="vaRequestFormError"></p>
+        <div class="modal-actions">
+          <button class="ghost-button" id="cancelVaRequestButton" type="button">Cancel</button>
+          <button class="solid-button" type="submit">Create request</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="driveLinkDialog">
+      <form method="dialog" class="model-form" id="driveLinkForm">
+        <div class="modal-header">
+          <div>
+            <h2>Add Google Drive link</h2>
+            <p>Paste a folder or file link for this model.</p>
+          </div>
+          <button class="icon-button" id="closeDriveLinkButton" type="button" aria-label="Close">x</button>
+        </div>
+        <label>
+          Name
+          <input id="driveLinkNameInput" required placeholder="March content pack">
+        </label>
+        <label>
+          URL
+          <input id="driveLinkUrlInput" type="url" required placeholder="https://drive.google.com/...">
+        </label>
+        <label>
+          Description
+          <textarea id="driveLinkDescriptionInput" rows="3"></textarea>
+        </label>
+        <p class="form-error" id="driveLinkFormError"></p>
+        <div class="modal-actions">
+          <button class="ghost-button" id="cancelDriveLinkButton" type="button">Cancel</button>
+          <button class="solid-button" type="submit">Save link</button>
+        </div>
+      </form>
+    </dialog>
+
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="/chart.js" type="module"></script>
     <script src="/app.js" type="module"></script>
   </body>
 </html>

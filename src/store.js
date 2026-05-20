@@ -51,12 +51,16 @@ export function createId(prefix) {
 }
 
 export function normalizeDb(db) {
-  return {
+  const normalized = {
     version: 1,
     models: Array.isArray(db.models) ? db.models : [],
     snapshots: Array.isArray(db.snapshots) ? db.snapshots : [],
-    syncLogs: Array.isArray(db.syncLogs) ? db.syncLogs : []
+    syncLogs: Array.isArray(db.syncLogs) ? db.syncLogs : [],
+    contentRequests: Array.isArray(db.contentRequests) ? db.contentRequests : [],
+    driveLinks: Array.isArray(db.driveLinks) ? db.driveLinks : [],
+    settings: db.settings && typeof db.settings === "object" ? db.settings : {}
   };
+  return normalized;
 }
 
 export function trimDb(db) {
@@ -69,6 +73,12 @@ function createSeedDb() {
     version: 1,
     models: [],
     snapshots: [],
-    syncLogs: []
+    syncLogs: [],
+    contentRequests: [],
+    driveLinks: [],
+    settings: {
+      autoSyncEnabled: true,
+      autoSyncIntervalMinutes: 60
+    }
   };
 }

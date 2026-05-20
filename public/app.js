@@ -10,8 +10,11 @@ const state = {
   models: [],
   snapshots: [],
   syncLogs: [],
+  contentRequests: [],
+  driveLinks: [],
   totals: {},
   fanvueStatus: { configured: false },
+  workspaceView: "overview",
   selectedModelId: null,
   editingModelId: null,
   periodPreset: "last14",
@@ -20,9 +23,21 @@ const state = {
   metricMode: "ownerNet",
   comparisonMetric: "ownerNet",
   comparisonPeriodPreset: "last14",
+  chartVisibleModels: new Set(),
+  chartAnimateSeen: new Map(),
+  chartWorkspaceKey: "",
+  settings: {
+    autoSyncEnabled: true,
+    autoSyncIntervalMinutes: 60
+  },
+  trafficMetric: "both",
+  modelTrafficMetric: "both",
+  trafficModelFilter: "",
   pendingAvatarUrl: null,
   clearAvatar: false,
   modelTab: "overview",
+  vaRequestModelId: null,
+  driveLinkModelId: null,
   contentCache: {
     vault: new Map(),
     posts: new Map()
@@ -31,11 +46,21 @@ const state = {
 
 const elements = {
   overviewButton: document.querySelector("#overviewButton"),
+  settingsButton: document.querySelector("#settingsButton"),
+  settingsView: document.querySelector("#settingsView"),
+  settingsForm: document.querySelector("#settingsForm"),
+  autoSyncEnabledInput: document.querySelector("#autoSyncEnabledInput"),
+  autoSyncIntervalInput: document.querySelector("#autoSyncIntervalInput"),
+  settingsFormError: document.querySelector("#settingsFormError"),
+  contentDriveButton: document.querySelector("#contentDriveButton"),
+  contentDriveNavCount: document.querySelector("#contentDriveNavCount"),
   overviewView: document.querySelector("#overviewView"),
+  contentDriveView: document.querySelector("#contentDriveView"),
   modelView: document.querySelector("#modelView"),
   trackingEmpty: document.querySelector("#trackingEmpty"),
   pageTitle: document.querySelector("#pageTitle"),
   modelList: document.querySelector("#modelList"),
+  modelsSectionLabel: document.querySelector("#modelsSectionLabel"),
   syncSummary: document.querySelector("#syncSummary"),
   periodPresetInput: document.querySelector("#periodPresetInput"),
   customFromField: document.querySelector("#customFromField"),
@@ -43,28 +68,36 @@ const elements = {
   dateFromInput: document.querySelector("#dateFromInput"),
   dateToInput: document.querySelector("#dateToInput"),
   metricModeInput: document.querySelector("#metricModeInput"),
-  comparisonMetricInput: document.querySelector("#comparisonMetricInput"),
-  overviewFanvueNet: document.querySelector("#overviewFanvueNet"),
-  overviewExternalRevenue: document.querySelector("#overviewExternalRevenue"),
   modelTableSubtitle: document.querySelector("#modelTableSubtitle"),
-  trackingLinksRows: document.querySelector("#trackingLinksRows"),
-  trackingLinksSubtitle: document.querySelector("#trackingLinksSubtitle"),
+  vaRequestsStrip: document.querySelector("#vaRequestsStrip"),
+  openVaRequestsCount: document.querySelector("#openVaRequestsCount"),
   vaultSubtitle: document.querySelector("#vaultSubtitle"),
   vaultContent: document.querySelector("#vaultContent"),
   postsSubtitle: document.querySelector("#postsSubtitle"),
   postsRows: document.querySelector("#postsRows"),
-  primaryMetricLabel: document.querySelector("#primaryMetricLabel"),
   primaryMetricValue: document.querySelector("#primaryMetricValue"),
   primaryMetricSubtext: document.querySelector("#primaryMetricSubtext"),
   overviewGross: document.querySelector("#overviewGross"),
   overviewAgencyDue: document.querySelector("#overviewAgencyDue"),
-  overviewHealth: document.querySelector("#overviewHealth"),
   comparisonSubtitle: document.querySelector("#comparisonSubtitle"),
   comparisonChart: document.querySelector("#comparisonChart"),
-  comparisonLegend: document.querySelector("#comparisonLegend"),
+  chartModelToggles: document.querySelector("#chartModelToggles"),
   modelPerformanceRows: document.querySelector("#modelPerformanceRows"),
-  payoutSummary: document.querySelector("#payoutSummary"),
-  agencyPayoutRows: document.querySelector("#agencyPayoutRows"),
+  internalTrafficChart: document.querySelector("#internalTrafficChart"),
+  internalTrafficChartSubtitle: document.querySelector("#internalTrafficChartSubtitle"),
+  trafficPanelSubtitle: document.querySelector("#trafficPanelSubtitle"),
+  trafficModelFilter: document.querySelector("#trafficModelFilter"),
+  trafficProfitRows: document.querySelector("#trafficProfitRows"),
+  contentDriveSubtitle: document.querySelector("#contentDriveSubtitle"),
+  contentDriveRequests: document.querySelector("#contentDriveRequests"),
+  modelProfileHeader: document.querySelector("#modelProfileHeader"),
+  modelContentSubtitle: document.querySelector("#modelContentSubtitle"),
+  modelContentSummary: document.querySelector("#modelContentSummary"),
+  modelContentRequests: document.querySelector("#modelContentRequests"),
+  modelDriveLinks: document.querySelector("#modelDriveLinks"),
+  modelTrackingSubtitle: document.querySelector("#modelTrackingSubtitle"),
+  modelTrafficSplit: document.querySelector("#modelTrafficSplit"),
+  modelTrackingRows: document.querySelector("#modelTrackingRows"),
   modelOwnerNet: document.querySelector("#modelOwnerNet"),
   modelPeriodLabel: document.querySelector("#modelPeriodLabel"),
   modelGross: document.querySelector("#modelGross"),
@@ -103,16 +136,59 @@ document.querySelector("#closeDialogButton").addEventListener("click", closeDial
 document.querySelector("#cancelDialogButton").addEventListener("click", closeDialog);
 elements.overviewButton.addEventListener("click", () => {
   state.selectedModelId = null;
+  state.workspaceView = "overview";
+  render();
+});
+elements.settingsButton.addEventListener("click", () => {
+  state.selectedModelId = null;
+  state.workspaceView = "settings";
+  render();
+});
+elements.settingsForm?.addEventListener("submit", saveSettings);
+elements.contentDriveButton.addEventListener("click", () => {
+  state.selectedModelId = null;
+  state.workspaceView = "contentDrive";
+  render();
+});
+document.querySelector("#vaRequestsStripButton")?.addEventListener("click", () => {
+  state.workspaceView = "contentDrive";
+  render();
+});
+document.querySelector("#addVaRequestButton")?.addEventListener("click", () => openVaRequestDialog());
+document.querySelector("#addModelVaRequestButton")?.addEventListener("click", () => openVaRequestDialog(selectedModel()?.id));
+document.querySelector("#addDriveLinkButton")?.addEventListener("click", () => openDriveLinkDialog(selectedModel()?.id));
+document.querySelector("#vaRequestForm")?.addEventListener("submit", saveVaRequest);
+document.querySelector("#driveLinkForm")?.addEventListener("submit", saveDriveLink);
+document.querySelector("#closeVaRequestButton")?.addEventListener("click", closeVaRequestDialog);
+document.querySelector("#cancelVaRequestButton")?.addEventListener("click", closeVaRequestDialog);
+document.querySelector("#closeDriveLinkButton")?.addEventListener("click", closeDriveLinkDialog);
+document.querySelector("#cancelDriveLinkButton")?.addEventListener("click", closeDriveLinkDialog);
+document.querySelectorAll("[data-comparison-metric]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.comparisonMetric = button.dataset.comparisonMetric;
+    render();
+  });
+});
+document.querySelectorAll("[data-traffic-metric]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.trafficMetric = button.dataset.trafficMetric;
+    render();
+  });
+});
+document.querySelectorAll("[data-model-traffic-metric]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.modelTrafficMetric = button.dataset.modelTrafficMetric;
+    render();
+  });
+});
+elements.trafficModelFilter?.addEventListener("change", () => {
+  state.trafficModelFilter = elements.trafficModelFilter.value;
   render();
 });
 elements.periodPresetInput.addEventListener("change", updatePeriodControls);
 elements.dateFromInput.addEventListener("change", updatePeriodControls);
 elements.dateToInput.addEventListener("change", updatePeriodControls);
 elements.metricModeInput.addEventListener("change", updatePeriodControls);
-elements.comparisonMetricInput.addEventListener("change", () => {
-  state.comparisonMetric = elements.comparisonMetricInput.value;
-  render();
-});
 document.querySelectorAll("[data-comparison-period]").forEach((button) => {
   button.addEventListener("click", () => {
     state.comparisonPeriodPreset = button.dataset.comparisonPeriod;
@@ -144,6 +220,9 @@ async function loadSummary() {
     state.models = summary.models;
     state.snapshots = summary.snapshots;
     state.syncLogs = summary.syncLogs;
+    state.contentRequests = summary.contentRequests || [];
+    state.driveLinks = summary.driveLinks || [];
+    state.settings = summary.settings || state.settings;
     state.totals = summary.totals;
     state.fanvueStatus = fanvueStatus;
 
@@ -151,6 +230,7 @@ async function loadSummary() {
       state.selectedModelId = null;
     }
 
+    ensureChartVisibility();
     initializePeriod();
     render();
   } catch (error) {
@@ -162,16 +242,29 @@ async function loadSummary() {
 function render() {
   const selected = selectedModel();
   const isModelView = Boolean(selected);
-  const errors = state.totals.errorModels || 0;
-  const ok = state.totals.okModels || 0;
-  const pending = Math.max(state.models.length - ok - errors, 0);
+  const isOverview = !isModelView && state.workspaceView === "overview";
+  const isContentDrive = !isModelView && state.workspaceView === "contentDrive";
+  const isSettings = !isModelView && state.workspaceView === "settings";
+  const openRequests = openRequestCount();
 
-  elements.pageTitle.textContent = selected ? selected.displayName : "All models";
-  elements.syncSummary.textContent = `${ok} healthy · ${errors} failing · ${pending} pending · ${state.models.length} total`;
+  elements.pageTitle.textContent = selected
+    ? selected.displayName
+    : isContentDrive
+      ? "Content Drive"
+      : isSettings
+        ? "Settings"
+        : "Dashboard";
+  elements.syncSummary.textContent = `${openRequests} open VA request${openRequests === 1 ? "" : "s"} · ${state.models.length} model${state.models.length === 1 ? "" : "s"}`;
   elements.trackingEmpty.hidden = state.models.length > 0;
-  elements.overviewView.hidden = isModelView;
+  elements.overviewView.hidden = !isOverview;
+  elements.contentDriveView.hidden = !isContentDrive;
+  elements.settingsView.hidden = !isSettings;
   elements.modelView.hidden = !isModelView;
-  elements.overviewButton.classList.toggle("active", !isModelView);
+  elements.overviewButton.classList.toggle("active", isOverview);
+  elements.contentDriveButton.classList.toggle("active", isContentDrive);
+  elements.settingsButton?.classList.toggle("active", isSettings);
+  elements.contentDriveNavCount.textContent = `${openRequests} open request${openRequests === 1 ? "" : "s"}`;
+  elements.modelsSectionLabel.textContent = `Models (${state.models.length})`;
   document.querySelector("#syncAllButton").disabled = !state.models.some(canSyncModel);
   elements.periodPresetInput.value = state.periodPreset;
   elements.customFromField.hidden = state.periodPreset !== "custom";
@@ -179,17 +272,37 @@ function render() {
   elements.dateFromInput.value = state.dateFrom;
   elements.dateToInput.value = state.dateTo;
   elements.metricModeInput.value = state.metricMode;
-  elements.comparisonMetricInput.value = state.comparisonMetric;
   document.querySelectorAll("[data-comparison-period]").forEach((button) => {
     button.classList.toggle("active", button.dataset.comparisonPeriod === state.comparisonPeriodPreset);
   });
+  document.querySelectorAll("[data-comparison-metric]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.comparisonMetric === state.comparisonMetric);
+  });
+  document.querySelectorAll("[data-traffic-metric]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.trafficMetric === state.trafficMetric);
+  });
+  document.querySelectorAll("[data-model-traffic-metric]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.modelTrafficMetric === state.modelTrafficMetric);
+  });
 
+  const workspaceKey = `${state.workspaceView}:${state.selectedModelId || ""}:${state.modelTab}`;
+  if (workspaceKey !== state.chartWorkspaceKey) {
+    state.chartAnimateSeen = new Map();
+    state.chartWorkspaceKey = workspaceKey;
+  }
+
+  renderVaRequestsStrip(openRequests);
   renderModels();
-  renderOverview();
-  renderModelView(selected);
-  renderLogs(selected);
-  renderConnection(selected);
-  renderModelTabPanels(selected);
+  if (isOverview) renderOverview();
+  if (isContentDrive) renderContentDrive();
+  if (isSettings) renderSettings();
+  if (isModelView) {
+    renderModelProfileHeader(selected);
+    renderModelView(selected);
+    renderLogs(selected);
+    renderConnection(selected);
+    renderModelTabPanels(selected);
+  }
 }
 
 function renderModels() {
@@ -198,17 +311,22 @@ function renderModels() {
     return;
   }
 
+  const rankings = modelOwnerNetRankings();
+
   elements.modelList.innerHTML = state.models.map((model, index) => {
     const active = model.id === state.selectedModelId ? "active" : "";
     const color = modelColor(model, index);
-    const latest = latestSnapshotForModel(model.id);
-    const ownerNet = latest ? profitForAggregate(latest).ownerNetCents : 0;
+    const totalRevenue = periodTotalsForModel(model).ownerNetCents;
+    const tag = modelStatusTag(model, rankings);
     return `
       <button class="model-item ${active}" type="button" data-model-id="${escapeHtml(model.id)}">
         ${modelAvatarHtml(model, color)}
         <span class="model-copy">
           <strong>${escapeHtml(model.displayName)}</strong>
-          <small>${escapeHtml(statusLabel(model.lastStatus))} · ${formatMoney(ownerNet)}</small>
+          <span class="model-sidebar-meta">
+            ${tag ? `<span class="status-tag ${tag.className}">${escapeHtml(tag.label)}</span>` : ""}
+            <small class="model-total-revenue">${formatMoney(totalRevenue)} total revenue</small>
+          </span>
         </span>
       </button>
     `;
@@ -217,6 +335,7 @@ function renderModels() {
   elements.modelList.querySelectorAll("[data-model-id]").forEach((button) => {
     button.addEventListener("click", () => {
       state.selectedModelId = button.dataset.modelId;
+      state.workspaceView = "overview";
       render();
     });
   });
@@ -226,108 +345,153 @@ function renderOverview() {
   const periodRows = state.models.map((model, index) => {
     const totals = periodTotalsForModel(model);
     const insights = modelInsights(model);
+    const priorInsights = modelInsightsForPriorPeriod(model);
     return {
       model,
       color: modelColor(model, index),
       totals,
       insights,
+      priorInsights,
+      boosts: boostsForInsights(insights, state.trafficMetric),
+      priorBoosts: boostsForInsights(priorInsights, state.trafficMetric),
       topSource: topSourceForModel(model)
     };
   });
   const grossCents = sum(periodRows.map((row) => row.totals.grossCents));
-  const fanvueNetCents = sum(periodRows.map((row) => row.totals.fanvueNetCents));
   const ownerNetCents = sum(periodRows.map((row) => row.totals.ownerNetCents));
-  const selectedMetricCents = metricValue({ grossCents, fanvueNetCents, ownerNetCents });
   const payoutPeriods = agencyPayoutPeriods();
   const agencyDueCents = sum(periodRows.map((row) => (
     payoutTotalForModel(row.model, payoutPeriods.fifteenth) + payoutTotalForModel(row.model, payoutPeriods.twentySeventh)
   )));
-  const externalRevenueCents = sum(periodRows.map((row) => row.insights.externalRevenueCents));
-  const connected = state.models.filter(canSyncModel).length;
 
-  elements.primaryMetricLabel.textContent = `Combined ${metricLabel(state.metricMode).toLowerCase()}`;
-  elements.primaryMetricValue.textContent = formatMoney(selectedMetricCents);
+  elements.primaryMetricValue.textContent = formatMoney(ownerNetCents);
   elements.primaryMetricSubtext.textContent = periodLabel();
-  elements.modelTableSubtitle.textContent = `${periodLabel()} · revenue since period start`;
+  elements.modelTableSubtitle.textContent = `${periodLabel()} · sorted by owner net`;
   elements.overviewGross.textContent = formatMoney(grossCents);
-  elements.overviewFanvueNet.textContent = formatMoney(fanvueNetCents);
   elements.overviewAgencyDue.textContent = formatMoney(agencyDueCents);
-  elements.overviewExternalRevenue.textContent = formatMoney(externalRevenueCents);
-  elements.overviewHealth.textContent = `${connected}/${state.models.length}`;
 
+  renderTrafficModelFilter();
   renderComparisonChart(periodRows);
+  renderChartModelToggles(periodRows);
   renderPerformanceTable(periodRows);
-  renderTrackingLinks(periodRows);
-  renderAgencyPayouts(periodRows);
+  renderTrafficProfitPanel(periodRows);
 }
 
 function renderComparisonChart(rows) {
   const dates = comparisonDateRange();
-  const series = rows.map((row) => ({
-    label: row.model.displayName,
-    color: row.color,
-    avatarUrl: row.model.avatarUrl || "",
-    points: comparisonPointsForModel(row.model, row.insights, dates)
-  }));
+  const series = rows
+    .filter((row) => state.chartVisibleModels.has(row.model.id))
+    .map((row) => ({
+      label: row.model.displayName,
+      color: row.color,
+      avatarUrl: row.model.avatarUrl || "",
+      points: comparisonPointsForModel(row.model, row.insights, dates)
+    }));
 
   elements.comparisonSubtitle.textContent = `${comparisonMetricLabel(state.comparisonMetric)} · ${comparisonPeriodLabel()}`;
-  renderInteractiveChart(elements.comparisonChart, {
+  mountChart(elements.comparisonChart, {
     series,
     dates,
     formatValue: comparisonMetricFormatter(state.comparisonMetric),
-    emptyMessage: "Sync models, then pick a metric and timeline to compare."
+    emptyMessage: "Turn on models below or sync data to compare.",
+    animateKey: chartAnimateKey("dashboard-comparison", [...state.chartVisibleModels].sort().join(","), state.comparisonMetric, state.comparisonPeriodPreset)
   });
-  elements.comparisonLegend.innerHTML = series.map((serie) => `
-    <span>${modelAvatarHtml({ displayName: serie.label, avatarUrl: serie.avatarUrl }, serie.color, { small: true })}${escapeHtml(serie.label)}</span>
-  `).join("") || `<span>No synced model data</span>`;
 }
 
-function renderPerformanceTable(rows) {
-  const sortedRows = [...rows].sort((a, b) => b.totals.ownerNetCents - a.totals.ownerNetCents);
-  elements.modelPerformanceRows.innerHTML = sortedRows.map((row) => `
-    <tr>
-      <td>
-        <button class="table-model-button" type="button" data-row-model-id="${escapeHtml(row.model.id)}">
-          ${modelAvatarHtml(row.model, row.color, { small: true })}
-          ${escapeHtml(row.model.displayName)}
-        </button>
-      </td>
-      <td>${formatMoney(row.totals.grossCents)}</td>
-      <td>${formatMoney(row.totals.fanvueNetCents)}</td>
-      <td>${formatMoney(row.totals.ownerNetCents)}</td>
-      <td>${formatCount(row.insights.newSubscribers)}</td>
-      <td>${formatCount(row.insights.newFollowers)}</td>
-      <td>${formatTrafficCell(row.insights.internal)}</td>
-      <td>${formatTrafficCell(row.insights.external)}</td>
-      <td>${formatMoney(row.insights.externalRevenueCents)}</td>
-      <td><span class="pill ${statusClass(row.model.lastStatus)}">${escapeHtml(statusLabel(row.model.lastStatus))}</span></td>
-    </tr>
-  `).join("") || `<tr><td colspan="10">No models in this period.</td></tr>`;
+function renderChartModelToggles(rows) {
+  if (!elements.chartModelToggles) return;
+  elements.chartModelToggles.innerHTML = rows.map((row) => {
+    const active = state.chartVisibleModels.has(row.model.id);
+    return `
+      <button class="chart-toggle ${active ? "active" : ""}" type="button" data-chart-model-id="${escapeHtml(row.model.id)}" style="--toggle-color:${row.color}">
+        ${modelAvatarHtml(row.model, row.color, { small: true })}
+        ${escapeHtml(row.model.displayName)}
+      </button>
+    `;
+  }).join("") || `<span class="empty-note">Add models to compare them here.</span>`;
 
-  elements.modelPerformanceRows.querySelectorAll("[data-row-model-id]").forEach((button) => {
+  elements.chartModelToggles.querySelectorAll("[data-chart-model-id]").forEach((button) => {
     button.addEventListener("click", () => {
-      state.selectedModelId = button.dataset.rowModelId;
+      const modelId = button.dataset.chartModelId;
+      if (state.chartVisibleModels.has(modelId)) state.chartVisibleModels.delete(modelId);
+      else state.chartVisibleModels.add(modelId);
       render();
     });
   });
 }
 
-function renderTrackingLinks(rows) {
+function renderPerformanceTable(rows) {
+  const rankings = modelOwnerNetRankings();
+  const sortedRows = [...rows].sort((a, b) => b.totals.ownerNetCents - a.totals.ownerNetCents);
+  elements.modelPerformanceRows.innerHTML = sortedRows.map((row) => {
+    const tag = modelStatusTag(row.model, rankings);
+    const boostFlag = likelyBoostActive(row.boosts, row.priorBoosts, row.insights.external, row.priorInsights.external);
+    const openRequests = openRequestCount(row.model.id);
+    return `
+    <tr>
+      <td>
+        <button class="table-model-button" type="button" data-row-model-id="${escapeHtml(row.model.id)}">
+          ${modelAvatarHtml(row.model, row.color, { small: true })}
+          <span class="table-model-copy">
+            <strong>${escapeHtml(row.model.displayName)}</strong>
+            ${tag ? `<span class="status-tag ${tag.className}">${escapeHtml(tag.label)}</span>` : ""}
+          </span>
+        </button>
+      </td>
+      <td>${formatMoney(row.totals.ownerNetCents)}</td>
+      <td>${formatCount(row.insights.newSubscribers)}</td>
+      <td class="${boostFlag ? "boost-alert" : ""}">${formatInternalCell(row.boosts)}${boostFlag ? `<span class="boost-hint">Likely boost</span>` : ""}</td>
+      <td>${formatTrafficMetricCell(row.insights.external, state.trafficMetric)}</td>
+      <td>${formatMoney(row.insights.externalRevenueCents)}</td>
+      <td>${openRequests ? formatCount(openRequests) : "—"}</td>
+    </tr>
+  `;
+  }).join("") || `<tr><td colspan="7">No models in this period.</td></tr>`;
+
+  elements.modelPerformanceRows.querySelectorAll("[data-row-model-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedModelId = button.dataset.rowModelId;
+      state.workspaceView = "overview";
+      render();
+    });
+  });
+}
+
+function renderTrafficModelFilter() {
+  if (!elements.trafficModelFilter) return;
+  const current = state.trafficModelFilter;
+  elements.trafficModelFilter.innerHTML = `
+    <option value="">All models</option>
+    ${state.models.map((model) => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.displayName)}</option>`).join("")}
+  `;
+  elements.trafficModelFilter.value = current;
+}
+
+function renderTrafficProfitPanel(rows) {
+  const filteredRows = state.trafficModelFilter
+    ? rows.filter((row) => row.model.id === state.trafficModelFilter)
+    : rows;
   const linkRows = [];
-  for (const row of rows) {
+  for (const row of filteredRows) {
     for (const link of row.insights.links) {
-      linkRows.push({ model: row.model, color: row.color, link });
+      linkRows.push({
+        model: row.model,
+        color: row.color,
+        link,
+        ownerNetShare: row.totals.ownerNetCents
+      });
     }
   }
 
-  const hasSyncGap = rows.some((row) => row.insights.dataNote);
-  elements.trackingLinksSubtitle.textContent = linkRows.length
-    ? `${linkRows.length} links · ${periodLabel()}`
+  linkRows.sort((a, b) => (b.link.netRevenueCents || 0) - (a.link.netRevenueCents || 0));
+  const hasSyncGap = filteredRows.some((row) => row.insights.dataNote);
+  elements.trafficPanelSubtitle.textContent = linkRows.length
+    ? `${linkRows.length} links · subs revenue only on external · ${periodLabel()}`
     : hasSyncGap
-      ? "No tracking data yet — run Sync all after reconnecting Fanvue."
-      : "No tracking links returned from Fanvue for this period.";
+      ? "Sync models to load tracking links."
+      : "No tracking links for this filter.";
 
-  elements.trackingLinksRows.innerHTML = linkRows.map((row) => `
+  elements.trafficProfitRows.innerHTML = linkRows.map((row) => `
     <tr>
       <td>
         <span class="table-model-inline">
@@ -337,37 +501,71 @@ function renderTrackingLinks(rows) {
       </td>
       <td>${escapeHtml(row.link.name)}</td>
       <td><span class="channel-pill ${row.link.channel}">${escapeHtml(row.link.channel)}</span></td>
-      <td>${formatCount(row.link.clicks)}</td>
-      <td>${formatCount(row.link.subscribers)}</td>
-      <td>${formatCount(row.link.followers)}</td>
+      <td>${formatTrafficMetricCell(row.link, state.trafficMetric)}</td>
       <td>${formatMoney(row.link.netRevenueCents)}</td>
+      <td>${formatMoney(row.ownerNetShare)}</td>
     </tr>
-  `).join("") || `<tr><td colspan="7">Sync all models to load tracking links. If still empty, reconnect Fanvue with read:tracking_links.</td></tr>`;
+  `).join("") || `<tr><td colspan="6">Sync all models to rank links by profitability.</td></tr>`;
 }
 
-function renderAgencyPayouts(rows) {
-  const periods = agencyPayoutPeriods();
-  const payoutRows = rows.map((row) => ({
-    ...row,
-    fifteenth: payoutTotalForModel(row.model, periods.fifteenth),
-    twentySeventh: payoutTotalForModel(row.model, periods.twentySeventh)
-  }));
-  const fifteenthTotal = sum(payoutRows.map((row) => row.fifteenth));
-  const twentySeventhTotal = sum(payoutRows.map((row) => row.twentySeventh));
+function renderVaRequestsStrip(openRequests) {
+  if (!elements.vaRequestsStrip) return;
+  elements.vaRequestsStrip.hidden = openRequests <= 0;
+  elements.openVaRequestsCount.textContent = String(openRequests);
+}
 
-  elements.payoutSummary.innerHTML = `
-    <div><span>${escapeHtml(periods.fifteenth.label)}</span><strong>${formatMoney(fifteenthTotal)}</strong></div>
-    <div><span>${escapeHtml(periods.twentySeventh.label)}</span><strong>${formatMoney(twentySeventhTotal)}</strong></div>
+function renderModelProfileHeader(model) {
+  if (!model || !elements.modelProfileHeader) return;
+  const index = state.models.findIndex((item) => item.id === model.id);
+  const color = modelColor(model, Math.max(index, 0));
+  const rankings = modelOwnerNetRankings();
+  const tag = modelStatusTag(model, rankings);
+  const totals = periodTotalsForModel(model);
+  const tagHtml = tag ? `<span class="status-tag ${tag.className}">${escapeHtml(tag.label)}</span>` : "";
+  const insights = modelInsights(model);
+  const priorInsights = modelInsightsForPriorPeriod(model);
+  const boosts = boostsForInsights(insights, state.modelTrafficMetric);
+  const boostFlag = likelyBoostActive(
+    boosts,
+    boostsForInsights(priorInsights, state.modelTrafficMetric),
+    insights.external,
+    priorInsights.external
+  );
+
+  elements.modelProfileHeader.innerHTML = `
+    <div class="model-profile-card">
+      ${modelAvatarHtml(model, color)}
+      <div>
+        <h2>${escapeHtml(model.displayName)}</h2>
+        <div class="model-profile-meta">
+          ${tagHtml}
+          <span>${formatMoney(totals.ownerNetCents)} owner net · ${periodLabel()}</span>
+          ${boostFlag ? `<span class="boost-hint">Likely internal boost</span>` : ""}
+        </div>
+      </div>
+    </div>
+    <div class="pill-group profile-period-pills" role="group" aria-label="Timeline">
+      ${["last7", "last14", "last30", "allTime"].map((preset) => `
+        <button class="pill-button ${state.periodPreset === preset ? "active" : ""}" type="button" data-profile-period="${preset}">
+          ${preset === "last7" ? "7d" : preset === "last14" ? "14d" : preset === "last30" ? "30d" : "All"}
+        </button>
+      `).join("")}
+    </div>
   `;
-  elements.agencyPayoutRows.innerHTML = payoutRows
-    .filter((row) => row.fifteenth > 0 || row.twentySeventh > 0)
-    .map((row) => `
-      <tr>
-        <td>${escapeHtml(row.model.displayName)}</td>
-        <td>${formatMoney(row.fifteenth)}</td>
-        <td>${formatMoney(row.twentySeventh)}</td>
-      </tr>
-    `).join("") || `<tr><td colspan="3">No agency payout due from synced daily earnings yet.</td></tr>`;
+
+  elements.modelProfileHeader.querySelectorAll("[data-profile-period]").forEach((button) => {
+    button.addEventListener("click", () => {
+      applyPeriodPreset(button.dataset.profilePeriod);
+      render();
+    });
+  });
+}
+
+function renderContentDrive() {
+  const open = state.contentRequests.filter((request) => request.status === "open");
+  elements.contentDriveSubtitle.textContent = `${open.length} open · ${state.contentRequests.length} total requests`;
+  elements.contentDriveRequests.innerHTML = renderRequestCards(state.contentRequests, { showModel: true });
+  bindRequestCardActions(elements.contentDriveRequests);
 }
 
 function renderModelView(model) {
@@ -390,11 +588,12 @@ function renderModelView(model) {
   const modelIndex = state.models.findIndex((item) => item.id === model.id);
   const color = modelColor(model, Math.max(modelIndex, 0));
   const points = pointsForModel(model, dates).map((point) => ({ date: point.date, value: metricValue(point) }));
-  renderInteractiveChart(elements.modelChart, {
+  mountChart(elements.modelChart, {
     series: [{ label: model.displayName, color, avatarUrl: model.avatarUrl || "", points }],
     dates,
     formatValue: formatMoney,
-    emptyMessage: "No daily earnings in this period yet."
+    emptyMessage: "No daily earnings in this period yet.",
+    animateKey: chartAnimateKey("model-revenue", model.id, state.periodPreset, state.dateFrom, state.dateTo)
   });
 
   renderRevenueMix(model);
@@ -417,10 +616,12 @@ function renderRevenueMix(model) {
     return;
   }
 
-  elements.revenueMix.innerHTML = rows.map((row) => {
+  const sorted = [...rows].sort((a, b) => b.value - a.value);
+  elements.revenueMix.innerHTML = sorted.map((row, index) => {
     const percent = row.value / total;
+    const barColor = mixColor(index);
     return `
-      <div class="mix-row">
+      <div class="mix-row" style="--mix-bar:${barColor}">
         <div>
           <strong>${escapeHtml(row.label)}</strong>
           <span>${formatMoney(row.value)} · ${formatPercent(percent)}</span>
@@ -447,18 +648,16 @@ function renderDailyRows(model) {
 }
 
 function renderLogs(model) {
-  const modelNames = new Map(state.models.map((item) => [item.id, item.displayName]));
   const logs = model ? state.syncLogs.filter((log) => log.modelId === model.id) : state.syncLogs;
   const rows = logs.slice(0, 12).map((log) => `
     <tr>
       <td>${formatDate(log.finishedAt || log.startedAt)}</td>
-      <td>${escapeHtml(modelNames.get(log.modelId) || "Removed model")}</td>
-      <td><span class="pill ${statusClass(log.status)}">${escapeHtml(statusLabel(log.status))}</span></td>
+      <td><span class="pill ${statusClass(log.status)}">${escapeHtml(syncStatusLabel(log.status))}</span></td>
       <td>${escapeHtml(log.message || "Completed")}</td>
     </tr>
   `);
 
-  elements.syncLogRows.innerHTML = rows.join("") || `<tr><td colspan="4">No sync runs yet.</td></tr>`;
+  elements.syncLogRows.innerHTML = rows.join("") || `<tr><td colspan="3">No sync runs yet.</td></tr>`;
 }
 
 function renderConnection(model) {
@@ -488,7 +687,7 @@ function renderConnection(model) {
   connectButton.textContent = oauthConnected ? "Reconnect Fanvue" : "Connect Fanvue";
   disconnectButton.hidden = !oauthConnected;
   disconnectButton.disabled = !oauthConnected;
-  elements.connectionStatus.textContent = model.lastError || statusLabel(model.lastStatus);
+  elements.connectionStatus.textContent = model.lastError || syncStatusLabel(model.lastStatus);
   elements.connectionDetails.innerHTML = detailRows([
     ["Fanvue", oauthConnected ? `Connected${model.fanvueOAuth.expiresAt ? ` until ${formatDate(model.fanvueOAuth.expiresAt)}` : ""}` : fanvueConfigLabel()],
     ["Profile", oauthConnected ? fanvueProfileLabel(model.fanvueOAuth.profile) : "Not connected"],
@@ -513,7 +712,8 @@ function updatePeriodControls() {
 function applyPeriodPreset(preset, options = {}) {
   const bounds = periodBoundsFromPreset(preset, {
     startDate: options.preserveCustom ? elements.dateFromInput.value : "",
-    endDate: options.preserveCustom ? elements.dateToInput.value : ""
+    endDate: options.preserveCustom ? elements.dateToInput.value : "",
+    allTimeStart: earliestDataDate()
   });
   state.periodPreset = bounds.preset;
   state.dateFrom = bounds.startDate;
@@ -911,12 +1111,277 @@ function statusClass(status) {
   return "pending";
 }
 
-function statusLabel(status) {
+function syncStatusLabel(status) {
   return {
-    ok: "Healthy",
-    error: "Failing",
+    ok: "Synced",
+    error: "Failed",
     pending: "Pending"
   }[status] || status || "Pending";
+}
+
+function modelOwnerNetRankings() {
+  return [...state.models]
+    .filter((model) => canSyncModel(model))
+    .map((model) => ({ model, ownerNetCents: periodTotalsForModel(model).ownerNetCents }))
+    .sort((a, b) => b.ownerNetCents - a.ownerNetCents)
+    .slice(0, 3)
+    .map((row) => row.model.id);
+}
+
+function modelStatusTag(model, topEarnerIds = []) {
+  if (!canSyncModel(model)) {
+    return { label: "UNPUBLISHED", className: "tag-unpublished" };
+  }
+  if (modelHasIssue(model)) {
+    return { label: "ISSUE", className: "tag-issue" };
+  }
+  if (topEarnerIds.includes(model.id)) {
+    return { label: "EARNER", className: "tag-earner" };
+  }
+  return null;
+}
+
+function modelHasIssue(model) {
+  if (model.lastStatus === "error" || model.lastError) return true;
+  const snapshot = latestSnapshotForModel(model.id);
+  if (snapshot?.contentErrors && Object.values(snapshot.contentErrors).some(Boolean)) return true;
+  return false;
+}
+
+function openRequestCount(modelId = null) {
+  return state.contentRequests.filter((request) => (
+    request.status === "open" && (!modelId || request.modelId === modelId)
+  )).length;
+}
+
+function ensureChartVisibility() {
+  const ids = state.models.map((model) => model.id);
+  if (!state.chartVisibleModels.size) {
+    ids.slice(0, Math.min(3, ids.length)).forEach((id) => state.chartVisibleModels.add(id));
+    return;
+  }
+  for (const id of [...state.chartVisibleModels]) {
+    if (!ids.includes(id)) state.chartVisibleModels.delete(id);
+  }
+  if (!state.chartVisibleModels.size) {
+    ids.slice(0, Math.min(3, ids.length)).forEach((id) => state.chartVisibleModels.add(id));
+  }
+}
+
+function priorPeriodBounds() {
+  const start = parseDateKey(state.dateFrom);
+  const end = parseDateKey(state.dateTo);
+  if (!start || !end) return { dateFrom: "", dateTo: "" };
+  const dayCount = Math.max(Math.round((end - start) / 86_400_000) + 1, 1);
+  const priorEnd = shiftUtcDays(start, -1);
+  const priorStart = shiftUtcDays(priorEnd, -(dayCount - 1));
+  return { dateFrom: dateKey(priorStart), dateTo: dateKey(priorEnd) };
+}
+
+function modelInsightsForPriorPeriod(model) {
+  const bounds = priorPeriodBounds();
+  const snapshot = latestSnapshotForModel(model.id);
+  const tracking = snapshot?.trackingSummary;
+  const audience = snapshot?.audienceSummary;
+  const zero = { linkCount: 0, clicks: 0, subscribers: 0, followers: 0, grossRevenueCents: 0, netRevenueCents: 0 };
+  const audienceDaily = (audience?.daily || []).filter((row) => dateInRange(row.date, bounds.dateFrom, bounds.dateTo));
+  const links = Array.isArray(tracking?.links) ? tracking.links : [];
+  const internal = aggregateLinkStats(links.filter((link) => link.channel === "internal"));
+  const external = aggregateLinkStats(links.filter((link) => link.channel === "external"));
+
+  return {
+    newSubscribers: sum(audienceDaily.map((row) => row.newSubscribers)) || 0,
+    newFollowers: sum(audienceDaily.map((row) => row.newFollowers)) || 0,
+    internal: links.length ? internal : zero,
+    external: links.length ? external : zero,
+    externalRevenueCents: external.netRevenueCents,
+    links,
+    audienceDaily
+  };
+}
+
+function totalTrafficForInsights(insights, metric) {
+  const audienceSubs = insights.newSubscribers || 0;
+  const audienceFollowers = insights.newFollowers || 0;
+  const linkSubs = (insights.internal?.subscribers || 0) + (insights.external?.subscribers || 0);
+  const linkFollowers = (insights.internal?.followers || 0) + (insights.external?.followers || 0);
+  const subs = Math.max(audienceSubs, linkSubs);
+  const followers = Math.max(audienceFollowers, linkFollowers);
+  if (metric === "subscribers") return subs;
+  if (metric === "followers") return followers;
+  return subs + followers;
+}
+
+function trafficMetricValue(stats, metric) {
+  if (!stats) return 0;
+  if (metric === "subscribers") return stats.subscribers || 0;
+  if (metric === "followers") return stats.followers || 0;
+  return (stats.subscribers || 0) + (stats.followers || 0);
+}
+
+function boostsForInsights(insights, metric) {
+  const total = totalTrafficForInsights(insights, metric);
+  const external = trafficMetricValue(insights.external, metric);
+  const value = Math.max(total - external, 0);
+  return { total, external, value, metric };
+}
+
+function formatInternalCell(boosts) {
+  if (!boosts?.value) return "—";
+  return `${formatCount(boosts.value)} traffic`;
+}
+
+function formatTrafficCount(value) {
+  return formatCount(value);
+}
+
+function formatTrafficMetricCell(stats, metric) {
+  if (!stats) return "—";
+  if (metric === "subscribers") return `${formatCount(stats.subscribers || stats.newSubscribers || 0)} subs`;
+  if (metric === "followers") return `${formatCount(stats.followers || stats.newFollowers || 0)} foll`;
+  const subs = stats.subscribers ?? stats.newSubscribers ?? 0;
+  const followers = stats.followers ?? stats.newFollowers ?? 0;
+  return `${formatCount(subs)} subs · ${formatCount(followers)} foll`;
+}
+
+function likelyBoostActive(boosts, priorBoosts, external, priorExternal) {
+  if (!boosts?.value) return false;
+  const trafficUp = boosts.total > (priorBoosts?.total || 0);
+  const externalFlat = trafficMetricValue(external, boosts.metric) <= trafficMetricValue(priorExternal, boosts.metric);
+  return trafficUp && externalFlat;
+}
+
+function mixColor(index) {
+  return MODEL_COLORS[index % MODEL_COLORS.length];
+}
+
+function renderRequestCards(requests, options = {}) {
+  if (!requests.length) {
+    return `<p class="empty-note">No requests yet.</p>`;
+  }
+
+  const modelNames = new Map(state.models.map((model) => [model.id, model.displayName]));
+  return requests.map((request) => {
+    const modelName = modelNames.get(request.modelId) || "Unknown model";
+    return `
+      <article class="request-card" data-request-id="${escapeHtml(request.id)}">
+        <header class="request-card-header">
+          <div>
+            ${options.showModel ? `<span class="request-model">${escapeHtml(modelName)}</span>` : ""}
+            <span class="urgency-pill ${escapeHtml(request.urgency)}">${escapeHtml(request.urgency)}</span>
+            <span class="request-type">${escapeHtml(request.type || "content")}</span>
+            <span class="request-status">${escapeHtml(request.status)}</span>
+          </div>
+          <button class="ghost-button request-expand" type="button" data-expand-request="${escapeHtml(request.id)}">Details</button>
+        </header>
+        <div class="request-body" id="request-body-${escapeHtml(request.id)}" hidden>
+          <p>${escapeHtml(request.description || "No description")}</p>
+          ${request.status === "open" ? `
+            <div class="button-row">
+              <button class="solid-button" type="button" data-finish-request="${escapeHtml(request.id)}">Finished</button>
+              <button class="danger-button" type="button" data-deny-request="${escapeHtml(request.id)}">Denied</button>
+            </div>
+          ` : ""}
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+function bindRequestCardActions(container) {
+  container.querySelectorAll("[data-expand-request]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const panel = document.querySelector(`#request-body-${button.dataset.expandRequest}`);
+      if (panel) panel.hidden = !panel.hidden;
+    });
+  });
+  container.querySelectorAll("[data-finish-request]").forEach((button) => {
+    button.addEventListener("click", () => updateRequestStatus(button.dataset.finishRequest, "finished"));
+  });
+  container.querySelectorAll("[data-deny-request]").forEach((button) => {
+    button.addEventListener("click", () => updateRequestStatus(button.dataset.denyRequest, "denied"));
+  });
+}
+
+async function updateRequestStatus(requestId, status) {
+  await api(`/api/content-requests/${requestId}`, { method: "PATCH", body: { status } });
+  showToast(status === "finished" ? "Request marked finished" : "Request denied");
+  await loadSummary();
+}
+
+function openVaRequestDialog(modelId = null) {
+  state.vaRequestModelId = modelId;
+  const select = document.querySelector("#vaRequestModelInput");
+  select.innerHTML = state.models.map((model) => `
+    <option value="${escapeHtml(model.id)}">${escapeHtml(model.displayName)}</option>
+  `).join("");
+  if (modelId) select.value = modelId;
+  document.querySelector("#vaRequestFormError").textContent = "";
+  document.querySelector("#vaRequestForm").reset();
+  if (modelId) select.value = modelId;
+  document.querySelector("#vaRequestDialog").showModal();
+}
+
+function closeVaRequestDialog() {
+  document.querySelector("#vaRequestDialog").close();
+}
+
+async function saveVaRequest(event) {
+  event.preventDefault();
+  const errorEl = document.querySelector("#vaRequestFormError");
+  errorEl.textContent = "";
+  try {
+    await api("/api/content-requests", {
+      method: "POST",
+      body: {
+        modelId: document.querySelector("#vaRequestModelInput").value,
+        urgency: document.querySelector("#vaRequestUrgencyInput").value,
+        description: document.querySelector("#vaRequestDescriptionInput").value
+      }
+    });
+    closeVaRequestDialog();
+    showToast("VA request added");
+    await loadSummary();
+  } catch (error) {
+    errorEl.textContent = error.message;
+  }
+}
+
+function openDriveLinkDialog(modelId = null) {
+  if (!modelId && !selectedModel()) {
+    showToast("Select a model first.");
+    return;
+  }
+  state.driveLinkModelId = modelId || selectedModel().id;
+  document.querySelector("#driveLinkFormError").textContent = "";
+  document.querySelector("#driveLinkForm").reset();
+  document.querySelector("#driveLinkDialog").showModal();
+}
+
+function closeDriveLinkDialog() {
+  document.querySelector("#driveLinkDialog").close();
+}
+
+async function saveDriveLink(event) {
+  event.preventDefault();
+  const errorEl = document.querySelector("#driveLinkFormError");
+  errorEl.textContent = "";
+  try {
+    await api("/api/drive-links", {
+      method: "POST",
+      body: {
+        modelId: state.driveLinkModelId,
+        name: document.querySelector("#driveLinkNameInput").value,
+        url: document.querySelector("#driveLinkUrlInput").value,
+        description: document.querySelector("#driveLinkDescriptionInput").value
+      }
+    });
+    closeDriveLinkDialog();
+    showToast("Drive link saved");
+    await loadSummary();
+  } catch (error) {
+    errorEl.textContent = error.message;
+  }
 }
 
 function trendName(value) {
@@ -1081,26 +1546,7 @@ function buildInsightsNote(snapshot) {
 }
 
 function comparisonPointsForModel(model, insights, dates) {
-  if (["subscribers", "followers"].includes(state.comparisonMetric)) {
-    const dailyMap = new Map(insights.audienceDaily.map((row) => [row.date, row]));
-    return dates.map((date) => ({
-      date,
-      value: state.comparisonMetric === "subscribers"
-        ? (dailyMap.get(date)?.newSubscribers || 0)
-        : (dailyMap.get(date)?.newFollowers || 0)
-    }));
-  }
-
-  if (state.comparisonMetric === "externalRevenue") {
-    const perDay = Math.round((insights.externalRevenueCents || 0) / Math.max(dates.length, 1));
-    return dates.map((date) => ({ date, value: perDay }));
-  }
-
-  const revenueMetric = state.comparisonMetric === "gross"
-    ? "gross"
-    : state.comparisonMetric === "fanvueNet"
-      ? "fanvueNet"
-      : "ownerNet";
+  const revenueMetric = state.comparisonMetric === "gross" ? "gross" : "ownerNet";
   const previousMetric = state.metricMode;
   state.metricMode = revenueMetric;
   const points = pointsForModel(model, dates).map((point) => ({
@@ -1114,22 +1560,12 @@ function comparisonPointsForModel(model, insights, dates) {
 function comparisonMetricLabel(metric) {
   return {
     gross: "Gross revenue",
-    fanvueNet: "Fanvue net",
-    ownerNet: "Owner net",
-    subscribers: "New subscribers",
-    followers: "New followers",
-    externalRevenue: "External link revenue"
+    ownerNet: "Owner net"
   }[metric] || "Owner net";
 }
 
 function comparisonMetricFormatter(metric) {
-  if (["subscribers", "followers"].includes(metric)) return formatCount;
-  if (metric === "externalRevenue") return formatMoney;
   return formatMoney;
-}
-
-function formatTrafficCell(stats) {
-  return `${formatCount(stats.subscribers)} subs · ${formatCount(stats.followers)} foll`;
 }
 
 function formatCount(value = 0) {
@@ -1138,9 +1574,11 @@ function formatCount(value = 0) {
 
 function switchModelTab(tab) {
   state.modelTab = tab;
-  renderModelTabPanels(selectedModel());
+  const model = selectedModel();
+  renderModelTabPanels(model);
   if (tab === "vault") loadVaultContent(false);
   if (tab === "posts") loadPostsContent(false);
+  if (tab === "traffic" && model) renderModelTrafficTab(model);
 }
 
 function renderModelTabPanels(model) {
@@ -1148,11 +1586,71 @@ function renderModelTabPanels(model) {
     button.classList.toggle("active", button.dataset.modelTab === state.modelTab);
   });
   document.querySelector("#modelTabOverview").hidden = state.modelTab !== "overview";
+  document.querySelector("#modelTabTraffic").hidden = state.modelTab !== "traffic";
+  document.querySelector("#modelTabContent").hidden = state.modelTab !== "content";
   document.querySelector("#modelTabVault").hidden = state.modelTab !== "vault";
   document.querySelector("#modelTabPosts").hidden = state.modelTab !== "posts";
+  document.querySelector("#modelTabConnection").hidden = state.modelTab !== "connection";
   if (!model) return;
+  if (state.modelTab === "traffic") renderModelTrafficTab(model);
+  if (state.modelTab === "content") renderModelContentTab(model);
   if (state.modelTab === "vault") renderVaultPanel(model, state.contentCache.vault.get(model.id));
   if (state.modelTab === "posts") renderPostsPanel(model, state.contentCache.posts.get(model.id));
+}
+
+function renderModelTrafficTab(model) {
+  const insights = modelInsights(model);
+  const priorInsights = modelInsightsForPriorPeriod(model);
+  const total = totalTrafficForInsights(insights, state.modelTrafficMetric);
+  const external = trafficMetricValue(insights.external, state.modelTrafficMetric);
+  const boosts = boostsForInsights(insights, state.modelTrafficMetric);
+  const boostFlag = likelyBoostActive(
+    boosts,
+    boostsForInsights(priorInsights, state.modelTrafficMetric),
+    insights.external,
+    priorInsights.external
+  );
+
+  elements.modelTrackingSubtitle.textContent = `${periodLabel()} · revenue from subs on external links`;
+  elements.modelTrafficSplit.innerHTML = `
+    <article class="traffic-card internal"><span>Internal</span><strong>${formatInternalCell(boosts)}</strong>${boostFlag ? `<small>Likely internal boost</small>` : ""}</article>
+    <article class="traffic-card external"><span>External</span><strong>${formatTrafficCount(external)}</strong></article>
+    <article class="traffic-card total"><span>Total</span><strong>${formatTrafficCount(total)}</strong></article>
+  `;
+
+  renderInternalTrafficChart(model);
+
+  elements.modelTrackingRows.innerHTML = insights.links.map((link) => `
+    <tr>
+      <td>${escapeHtml(link.name)}</td>
+      <td><span class="channel-pill ${link.channel}">${escapeHtml(link.channel)}</span></td>
+      <td>${formatTrafficMetricCell(link, state.modelTrafficMetric)}</td>
+      <td>${formatMoney(link.netRevenueCents)}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="4">Sync this model to load tracking links.</td></tr>`;
+}
+
+function renderModelContentTab(model) {
+  const requests = state.contentRequests.filter((request) => request.modelId === model.id);
+  const open = requests.filter((request) => request.status === "open");
+  const links = state.driveLinks.filter((link) => link.modelId === model.id);
+
+  elements.modelContentSubtitle.textContent = `${open.length} open request${open.length === 1 ? "" : "s"} · ${links.length} Drive link${links.length === 1 ? "" : "s"}`;
+  elements.modelContentSummary.innerHTML = `
+    <div class="content-gen-stat"><span>Open requests</span><strong>${formatCount(open.length)}</strong></div>
+    <div class="content-gen-stat"><span>Drive links</span><strong>${formatCount(links.length)}</strong></div>
+  `;
+  elements.modelContentRequests.innerHTML = renderRequestCards(requests, { showModel: false });
+  bindRequestCardActions(elements.modelContentRequests);
+  elements.modelDriveLinks.innerHTML = links.map((link) => `
+    <article class="drive-link-card">
+      <div>
+        <strong><a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.name)}</a></strong>
+        <p>${escapeHtml(link.description || "No description")}</p>
+      </div>
+    </article>
+  `).join("") || `<p class="empty-note">No Google Drive links yet. Add one for reference folders.</p>`;
+  state.driveLinkModelId = model.id;
 }
 
 async function loadVaultContent(force) {
@@ -1299,6 +1797,109 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function chartAnimateKey(...parts) {
+  return parts.filter(Boolean).join("|");
+}
+
+function shouldAnimateChart(animateKey) {
+  if (!animateKey) return false;
+  if (state.chartAnimateSeen.has(animateKey)) return false;
+  state.chartAnimateSeen.set(animateKey, true);
+  return true;
+}
+
+function mountChart(container, options) {
+  if (!container) return;
+  const animate = shouldAnimateChart(options.animateKey);
+  renderInteractiveChart(container, {
+    series: options.series,
+    dates: options.dates,
+    formatValue: options.formatValue,
+    emptyMessage: options.emptyMessage,
+    animate
+  });
+}
+
+function renderSettings() {
+  elements.autoSyncEnabledInput.checked = Boolean(state.settings.autoSyncEnabled);
+  elements.autoSyncIntervalInput.value = state.settings.autoSyncIntervalMinutes || 60;
+  elements.autoSyncIntervalInput.disabled = !state.settings.autoSyncEnabled;
+  elements.settingsFormError.textContent = "";
+}
+
+async function saveSettings(event) {
+  event.preventDefault();
+  elements.settingsFormError.textContent = "";
+  try {
+    const payload = {
+      autoSyncEnabled: elements.autoSyncEnabledInput.checked,
+      autoSyncIntervalMinutes: Number(elements.autoSyncIntervalInput.value)
+    };
+    state.settings = await api("/api/settings", { method: "PATCH", body: payload });
+    showToast("Settings saved");
+    render();
+  } catch (error) {
+    elements.settingsFormError.textContent = error.message;
+  }
+}
+
+elements.autoSyncEnabledInput?.addEventListener("change", () => {
+  elements.autoSyncIntervalInput.disabled = !elements.autoSyncEnabledInput.checked;
+});
+
+function internalTrafficDailyPoints(model, metric) {
+  const snapshot = latestSnapshotForModel(model.id);
+  const audienceDaily = (snapshot?.audienceSummary?.daily || [])
+    .filter((row) => dateInRange(row.date, state.dateFrom, state.dateTo));
+  const insights = modelInsights(model);
+  const externalTotal = trafficMetricValue(insights.external, metric);
+  const dayCount = Math.max(audienceDaily.length, 1);
+  const externalPerDay = Math.round(externalTotal / dayCount);
+
+  return audienceDaily.map((row) => {
+    const total = metric === "subscribers"
+      ? row.newSubscribers
+      : metric === "followers"
+        ? row.newFollowers
+        : (row.newSubscribers || 0) + (row.newFollowers || 0);
+    return {
+      date: row.date,
+      value: Math.max(total - externalPerDay, 0)
+    };
+  });
+}
+
+function renderInternalTrafficChart(model) {
+  if (!elements.internalTrafficChart) return;
+  const dates = selectedDateRange();
+  const points = internalTrafficDailyPoints(model, state.modelTrafficMetric);
+  const index = state.models.findIndex((item) => item.id === model.id);
+  const color = modelColor(model, Math.max(index, 0));
+
+  elements.internalTrafficChartSubtitle.textContent = `${periodLabel()} · spikes may indicate Fanvue internal boost`;
+
+  mountChart(elements.internalTrafficChart, {
+    series: [{
+      label: "Internal traffic",
+      color,
+      points: dates.map((date) => {
+        const point = points.find((item) => item.date === date);
+        return { date, value: point?.value || 0 };
+      })
+    }],
+    dates,
+    formatValue: formatCount,
+    emptyMessage: "Sync this model to see daily internal traffic.",
+    animateKey: chartAnimateKey(
+      "model-internal-traffic",
+      model.id,
+      state.modelTrafficMetric,
+      state.periodPreset,
+      [...dates].join(",")
+    )
+  });
 }
 
 function showToast(message) {
