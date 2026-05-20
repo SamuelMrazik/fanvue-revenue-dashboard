@@ -707,13 +707,20 @@ function renderConnection(model) {
   const connectionMessage = model.lastError || syncStatusLabel(model.lastStatus);
   elements.connectionStatus.textContent = connectionMessage;
   elements.connectionStatus.classList.toggle("connection-error", Boolean(model.lastError));
+  const contentErrors = contentErrorsForModel(model);
+  const errorHint = contentErrors.length
+    ? contentErrors.map((row) => `${row.key}: ${row.message}`).join(" · ")
+    : "";
+
   elements.connectionDetails.innerHTML = detailRows([
     ["Fanvue", oauthConnected ? `Connected${model.fanvueOAuth.expiresAt ? ` until ${formatDate(model.fanvueOAuth.expiresAt)}` : ""}` : fanvueConfigLabel()],
     ["Profile", oauthConnected ? fanvueProfileLabel(model.fanvueOAuth.profile) : "Not connected"],
+    ["Scopes", model.fanvueOAuth?.scope || state.fanvueStatus.scopes || "—"],
     ["Last sync", model.lastSyncAt ? formatDate(model.lastSyncAt) : "Never"],
     ["Next sync", model.nextSyncAt ? formatDate(model.nextSyncAt) : "Not scheduled"],
     ["Interval", `${model.syncIntervalMinutes} minutes`],
-    ["Enabled", model.enabled ? "Yes" : "No"]
+    ["Enabled", model.enabled ? "Yes" : "No"],
+    ...(errorHint ? [["Sync gaps", errorHint]] : [])
   ]);
 }
 
@@ -1152,6 +1159,9 @@ function modelStatusTag(model, topEarnerIds = []) {
   if (modelHasIssue(model)) {
     return { label: "ISSUE", className: "tag-issue" };
   }
+  if (modelHasTrafficWarning(model)) {
+    return { label: "WARN", className: "tag-warn" };
+  }
   if (topEarnerIds.includes(model.id)) {
     return { label: "EARNER", className: "tag-earner" };
   }
@@ -1160,9 +1170,22 @@ function modelStatusTag(model, topEarnerIds = []) {
 
 function modelHasIssue(model) {
   if (model.lastStatus === "error" || model.lastError) return true;
-  const snapshot = latestSnapshotForModel(model.id);
-  if (snapshot?.contentErrors && Object.values(snapshot.contentErrors).some(Boolean)) return true;
   return false;
+}
+
+function modelHasTrafficWarning(model) {
+  const snapshot = latestSnapshotForModel(model.id);
+  if (!snapshot?.contentErrors) return false;
+  const keys = ["tracking", "audience"];
+  return keys.some((key) => Boolean(snapshot.contentErrors[key]));
+}
+
+function contentErrorsForModel(model) {
+  const snapshot = latestSnapshotForModel(model.id);
+  if (!snapshot?.contentErrors) return [];
+  return Object.entries(snapshot.contentErrors)
+    .filter(([, message]) => message)
+    .map(([key, message]) => ({ key, message }));
 }
 
 function openRequestCount(modelId = null) {
@@ -1628,7 +1651,10 @@ function renderModelTrafficTab(model) {
     priorInsights.external
   );
 
-  elements.modelTrackingSubtitle.textContent = `${periodLabel()} · revenue from subs on external links`;
+  const syncNote = buildInsightsNote(latestSnapshotForModel(model.id));
+  elements.modelTrackingSubtitle.textContent = syncNote
+    ? syncNote
+    : `${periodLabel()} · revenue from subs on external links`;
   elements.modelTrafficSplit.innerHTML = `
     <article class="traffic-card internal"><span>Internal</span><strong>${formatInternalCell(boosts)}</strong>${boostFlag ? `<small>Likely internal boost</small>` : ""}</article>
     <article class="traffic-card external"><span>External</span><strong>${formatTrafficCount(external)}</strong></article>
@@ -1636,6 +1662,13 @@ function renderModelTrafficTab(model) {
   `;
 
   renderInternalTrafficChart(model);
+
+  if (!insights.links.length && syncNote) {
+    elements.modelTrafficSplit.innerHTML = `<div class="chart-empty compact-empty">${escapeHtml(syncNote)}</div>`;
+    elements.modelTrackingRows.innerHTML = `<tr><td colspan="4">${escapeHtml(syncNote)}</td></tr>`;
+    renderInternalTrafficChart(model);
+    return;
+  }
 
   elements.modelTrackingRows.innerHTML = insights.links.map((link) => `
     <tr>

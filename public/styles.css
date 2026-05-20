@@ -1413,6 +1413,11 @@ th {
   background: rgb(251 113 133 / 0.16);
 }
 
+.tag-warn {
+  color: #fde68a;
+  background: rgb(245 158 11 / 0.16);
+}
+
 .boost-alert {
   color: #99f6e4;
 }

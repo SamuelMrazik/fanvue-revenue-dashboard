@@ -30,7 +30,7 @@ services:
       - key: FANVUE_REDIRECT_URI
         sync: false
       - key: FANVUE_SCOPES
-        value: openid offline_access offline read:self read:insights
+        value: openid offline_access offline read:self read:insights read:creator read:media read:post read:fan read:tracking_links read:agency
       - key: FANVUE_API_VERSION
         value: "2025-06-26"
       - key: FANVUE_API_BASE_URL
