@@ -80,17 +80,6 @@
                 <option value="fanvueNet">Fanvue net</option>
               </select>
             </label>
-            <label>
-              Chart metric
-              <select id="comparisonMetricInput">
-                <option value="ownerNet">Owner net</option>
-                <option value="gross">Gross revenue</option>
-                <option value="fanvueNet">Fanvue net</option>
-                <option value="subscribers">New subscribers</option>
-                <option value="followers">New followers</option>
-                <option value="externalRevenue">External link revenue</option>
-              </select>
-            </label>
           </section>
 
           <section class="overview-hero overview-hero-grid" aria-label="Combined revenue overview">
@@ -130,7 +119,26 @@
             <div class="panel-header">
               <div>
                 <h2>Model comparison</h2>
-                <p id="comparisonSubtitle">Overlay chart by model color</p>
+                <p id="comparisonSubtitle">Hover the chart for exact values</p>
+              </div>
+              <div class="chart-header-controls">
+                <div class="pill-group" id="comparisonPeriodPills" role="group" aria-label="Chart timeline">
+                  <button class="pill-button active" type="button" data-comparison-period="last7">7d</button>
+                  <button class="pill-button" type="button" data-comparison-period="last14">14d</button>
+                  <button class="pill-button" type="button" data-comparison-period="last30">30d</button>
+                  <button class="pill-button" type="button" data-comparison-period="allTime">All time</button>
+                </div>
+                <label class="compact-select">
+                  Metric
+                  <select id="comparisonMetricInput">
+                    <option value="ownerNet">Owner net</option>
+                    <option value="gross">Gross revenue</option>
+                    <option value="fanvueNet">Fanvue net</option>
+                    <option value="subscribers">New subscribers</option>
+                    <option value="followers">New followers</option>
+                    <option value="externalRevenue">External revenue</option>
+                  </select>
+                </label>
               </div>
             </div>
             <div class="chart-wrap comparison-chart" id="comparisonChart"></div>
@@ -169,8 +177,8 @@
             <section class="panel">
               <div class="panel-header compact">
                 <div>
-                  <h2>Traffic detail</h2>
-                  <p>Internal vs external tracking links</p>
+                  <h2>Tracking links</h2>
+                  <p id="trackingLinksSubtitle">Per-link performance from Fanvue</p>
                 </div>
               </div>
               <div class="table-scroll">
@@ -178,6 +186,7 @@
                   <thead>
                     <tr>
                       <th>Model</th>
+                      <th>Link</th>
                       <th>Channel</th>
                       <th>Clicks</th>
                       <th>Subs</th>
@@ -185,7 +194,7 @@
                       <th>Net revenue</th>
                     </tr>
                   </thead>
-                  <tbody id="trafficDetailRows"></tbody>
+                  <tbody id="trackingLinksRows"></tbody>
                 </table>
               </div>
             </section>
@@ -385,6 +394,17 @@
         <label>
           Display name
           <input id="displayNameInput" name="displayName" autocomplete="off" placeholder="Creator name" required>
+        </label>
+
+        <label class="avatar-field">
+          Profile photo
+          <div class="avatar-upload-row">
+            <div class="avatar-preview" id="avatarPreview" aria-hidden="true"></div>
+            <div class="avatar-actions">
+              <input id="avatarInput" type="file" accept="image/png,image/jpeg,image/webp">
+              <button class="ghost-button" id="clearAvatarButton" type="button">Remove photo</button>
+            </div>
+          </div>
         </label>
 
         <div class="inline-fields">

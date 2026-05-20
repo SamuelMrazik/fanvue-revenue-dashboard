@@ -1,3 +1,5 @@
+import { renderInteractiveChart } from "./chart.js";
+
 const DEFAULT_FANVUE_API_BASE_URL = "https://api.fanvue.com";
 const DEFAULT_FANVUE_ENDPOINT = "/insights/earnings/summary";
 const FANVUE_FEE_RATE = 15;
@@ -17,6 +19,9 @@ const state = {
   dateTo: "",
   metricMode: "ownerNet",
   comparisonMetric: "ownerNet",
+  comparisonPeriodPreset: "last14",
+  pendingAvatarUrl: null,
+  clearAvatar: false,
   modelTab: "overview",
   contentCache: {
     vault: new Map(),
@@ -42,7 +47,8 @@ const elements = {
   overviewFanvueNet: document.querySelector("#overviewFanvueNet"),
   overviewExternalRevenue: document.querySelector("#overviewExternalRevenue"),
   modelTableSubtitle: document.querySelector("#modelTableSubtitle"),
-  trafficDetailRows: document.querySelector("#trafficDetailRows"),
+  trackingLinksRows: document.querySelector("#trackingLinksRows"),
+  trackingLinksSubtitle: document.querySelector("#trackingLinksSubtitle"),
   vaultSubtitle: document.querySelector("#vaultSubtitle"),
   vaultContent: document.querySelector("#vaultContent"),
   postsSubtitle: document.querySelector("#postsSubtitle"),
@@ -103,7 +109,22 @@ elements.periodPresetInput.addEventListener("change", updatePeriodControls);
 elements.dateFromInput.addEventListener("change", updatePeriodControls);
 elements.dateToInput.addEventListener("change", updatePeriodControls);
 elements.metricModeInput.addEventListener("change", updatePeriodControls);
-elements.comparisonMetricInput.addEventListener("change", updatePeriodControls);
+elements.comparisonMetricInput.addEventListener("change", () => {
+  state.comparisonMetric = elements.comparisonMetricInput.value;
+  render();
+});
+document.querySelectorAll("[data-comparison-period]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.comparisonPeriodPreset = button.dataset.comparisonPeriod;
+    render();
+  });
+});
+document.querySelector("#avatarInput").addEventListener("change", onAvatarSelected);
+document.querySelector("#clearAvatarButton").addEventListener("click", () => {
+  state.pendingAvatarUrl = null;
+  state.clearAvatar = true;
+  renderAvatarPreview(null);
+});
 elements.modelForm.addEventListener("submit", saveModel);
 document.querySelectorAll("[data-model-tab]").forEach((button) => {
   button.addEventListener("click", () => switchModelTab(button.dataset.modelTab));
@@ -159,6 +180,9 @@ function render() {
   elements.dateToInput.value = state.dateTo;
   elements.metricModeInput.value = state.metricMode;
   elements.comparisonMetricInput.value = state.comparisonMetric;
+  document.querySelectorAll("[data-comparison-period]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.comparisonPeriod === state.comparisonPeriodPreset);
+  });
 
   renderModels();
   renderOverview();
@@ -181,8 +205,11 @@ function renderModels() {
     const ownerNet = latest ? profitForAggregate(latest).ownerNetCents : 0;
     return `
       <button class="model-item ${active}" type="button" data-model-id="${escapeHtml(model.id)}">
-        <strong><i style="--model-color: ${color}"></i>${escapeHtml(model.displayName)}</strong>
-        <span>${escapeHtml(statusLabel(model.lastStatus))} · ${formatMoney(ownerNet)}</span>
+        ${modelAvatarHtml(model, color)}
+        <span class="model-copy">
+          <strong>${escapeHtml(model.displayName)}</strong>
+          <small>${escapeHtml(statusLabel(model.lastStatus))} · ${formatMoney(ownerNet)}</small>
+        </span>
       </button>
     `;
   }).join("");
@@ -230,27 +257,28 @@ function renderOverview() {
 
   renderComparisonChart(periodRows);
   renderPerformanceTable(periodRows);
-  renderTrafficDetail(periodRows);
+  renderTrackingLinks(periodRows);
   renderAgencyPayouts(periodRows);
 }
 
 function renderComparisonChart(rows) {
-  const dates = selectedDateRange();
-  const series = rows
-    .map((row) => ({
-      label: row.model.displayName,
-      color: row.color,
-      points: comparisonPointsForModel(row.model, row.insights, dates)
-    }))
-    .filter((serie) => serie.points.some((point) => point.value > 0));
+  const dates = comparisonDateRange();
+  const series = rows.map((row) => ({
+    label: row.model.displayName,
+    color: row.color,
+    avatarUrl: row.model.avatarUrl || "",
+    points: comparisonPointsForModel(row.model, row.insights, dates)
+  }));
 
-  elements.comparisonSubtitle.textContent = `${comparisonMetricLabel(state.comparisonMetric)} · ${periodLabel()}`;
-  elements.comparisonChart.innerHTML = lineChartSvg(series, dates, {
-    empty: "Sync models to populate comparison data.",
-    valueFormatter: comparisonMetricFormatter(state.comparisonMetric)
+  elements.comparisonSubtitle.textContent = `${comparisonMetricLabel(state.comparisonMetric)} · ${comparisonPeriodLabel()}`;
+  renderInteractiveChart(elements.comparisonChart, {
+    series,
+    dates,
+    formatValue: comparisonMetricFormatter(state.comparisonMetric),
+    emptyMessage: "Sync models, then pick a metric and timeline to compare."
   });
   elements.comparisonLegend.innerHTML = series.map((serie) => `
-    <span><i style="--model-color: ${serie.color}"></i>${escapeHtml(serie.label)}</span>
+    <span>${modelAvatarHtml({ displayName: serie.label, avatarUrl: serie.avatarUrl }, serie.color, { small: true })}${escapeHtml(serie.label)}</span>
   `).join("") || `<span>No synced model data</span>`;
 }
 
@@ -260,7 +288,8 @@ function renderPerformanceTable(rows) {
     <tr>
       <td>
         <button class="table-model-button" type="button" data-row-model-id="${escapeHtml(row.model.id)}">
-          <i style="--model-color: ${row.color}"></i>${escapeHtml(row.model.displayName)}
+          ${modelAvatarHtml(row.model, row.color, { small: true })}
+          ${escapeHtml(row.model.displayName)}
         </button>
       </td>
       <td>${formatMoney(row.totals.grossCents)}</td>
@@ -283,26 +312,37 @@ function renderPerformanceTable(rows) {
   });
 }
 
-function renderTrafficDetail(rows) {
-  const detailRows = [];
+function renderTrackingLinks(rows) {
+  const linkRows = [];
   for (const row of rows) {
-    for (const channel of ["internal", "external"]) {
-      const stats = row.insights[channel];
-      if (!stats.linkCount && !stats.clicks && !stats.subscribers && !stats.followers && !stats.netRevenueCents) continue;
-      detailRows.push({ model: row.model, color: row.color, channel, stats });
+    for (const link of row.insights.links) {
+      linkRows.push({ model: row.model, color: row.color, link });
     }
   }
 
-  elements.trafficDetailRows.innerHTML = detailRows.map((row) => `
+  const hasSyncGap = rows.some((row) => row.insights.dataNote);
+  elements.trackingLinksSubtitle.textContent = linkRows.length
+    ? `${linkRows.length} links · ${periodLabel()}`
+    : hasSyncGap
+      ? "No tracking data yet — run Sync all after reconnecting Fanvue."
+      : "No tracking links returned from Fanvue for this period.";
+
+  elements.trackingLinksRows.innerHTML = linkRows.map((row) => `
     <tr>
-      <td><i style="--model-color: ${row.color}"></i>${escapeHtml(row.model.displayName)}</td>
-      <td>${escapeHtml(row.channel)}</td>
-      <td>${formatCount(row.stats.clicks)}</td>
-      <td>${formatCount(row.stats.subscribers)}</td>
-      <td>${formatCount(row.stats.followers)}</td>
-      <td>${formatMoney(row.stats.netRevenueCents)}</td>
+      <td>
+        <span class="table-model-inline">
+          ${modelAvatarHtml(row.model, row.color, { small: true })}
+          ${escapeHtml(row.model.displayName)}
+        </span>
+      </td>
+      <td>${escapeHtml(row.link.name)}</td>
+      <td><span class="channel-pill ${row.link.channel}">${escapeHtml(row.link.channel)}</span></td>
+      <td>${formatCount(row.link.clicks)}</td>
+      <td>${formatCount(row.link.subscribers)}</td>
+      <td>${formatCount(row.link.followers)}</td>
+      <td>${formatMoney(row.link.netRevenueCents)}</td>
     </tr>
-  `).join("") || `<tr><td colspan="6">Sync models to load tracking link data.</td></tr>`;
+  `).join("") || `<tr><td colspan="7">Sync all models to load tracking links. If still empty, reconnect Fanvue with read:tracking_links.</td></tr>`;
 }
 
 function renderAgencyPayouts(rows) {
@@ -350,7 +390,12 @@ function renderModelView(model) {
   const modelIndex = state.models.findIndex((item) => item.id === model.id);
   const color = modelColor(model, Math.max(modelIndex, 0));
   const points = pointsForModel(model, dates).map((point) => ({ date: point.date, value: metricValue(point) }));
-  elements.modelChart.innerHTML = lineChartSvg([{ label: model.displayName, color, points }], dates, { empty: "No daily earnings in this period yet." });
+  renderInteractiveChart(elements.modelChart, {
+    series: [{ label: model.displayName, color, avatarUrl: model.avatarUrl || "", points }],
+    dates,
+    formatValue: formatMoney,
+    emptyMessage: "No daily earnings in this period yet."
+  });
 
   renderRevenueMix(model);
   renderDailyRows(model);
@@ -454,37 +499,6 @@ function renderConnection(model) {
   ]);
 }
 
-function lineChartSvg(series, dates, options = {}) {
-  const activeSeries = series.filter((serie) => serie.points.length);
-  if (!activeSeries.length || !dates.length) {
-    return `<div class="chart-empty">${escapeHtml(options.empty || "No chart data yet.")}</div>`;
-  }
-
-  const width = 920;
-  const height = 326;
-  const padding = { top: 32, right: 24, bottom: 42, left: 58 };
-  const values = activeSeries.flatMap((serie) => serie.points.map((point) => point.value));
-  const max = Math.max(...values, 1);
-  const formatValue = options.valueFormatter || formatMoney;
-  const xForIndex = (index) => padding.left + (index / Math.max(dates.length - 1, 1)) * (width - padding.left - padding.right);
-  const yForValue = (value) => height - padding.bottom - (value / max) * (height - padding.top - padding.bottom);
-  const xByDate = new Map(dates.map((date, index) => [date, xForIndex(index)]));
-  const lines = activeSeries.map((serie) => {
-    const points = serie.points.map((point) => `${xByDate.get(point.date)},${yForValue(point.value)}`).join(" ");
-    return `<polyline class="chart-line" style="--line-color: ${serie.color}" points="${points}"></polyline>`;
-  }).join("");
-
-  return `
-    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Revenue timeline">
-      <path class="chart-grid" d="M ${padding.left} ${yForValue(max)} H ${width - padding.right} M ${padding.left} ${yForValue(max / 2)} H ${width - padding.right} M ${padding.left} ${yForValue(0)} H ${width - padding.right}"></path>
-      <text x="${padding.left}" y="20" fill="currentColor" font-size="13">${formatValue(max)}</text>
-      <text x="${padding.left}" y="${height - 14}" fill="currentColor" font-size="13">${formatShortDate(dates[0])}</text>
-      <text x="${width - padding.right - 96}" y="${height - 14}" fill="currentColor" font-size="13">${formatShortDate(dates.at(-1))}</text>
-      ${lines}
-    </svg>
-  `;
-}
-
 function initializePeriod() {
   applyPeriodPreset(state.periodPreset || "last14", { preserveCustom: Boolean(state.dateFrom && state.dateTo) });
 }
@@ -492,7 +506,6 @@ function initializePeriod() {
 function updatePeriodControls() {
   state.periodPreset = elements.periodPresetInput.value;
   state.metricMode = elements.metricModeInput.value;
-  state.comparisonMetric = elements.comparisonMetricInput.value;
   applyPeriodPreset(state.periodPreset, { preserveCustom: true });
   render();
 }
@@ -513,15 +526,34 @@ function applyPeriodPreset(preset, options = {}) {
 }
 
 function selectedDateRange() {
+  return buildDateRange(state.dateFrom, state.dateTo);
+}
+
+function comparisonDateRange() {
+  const bounds = periodBoundsFromPreset(state.comparisonPeriodPreset, {
+    allTimeStart: earliestDataDate()
+  });
+  return buildDateRange(bounds.startDate, bounds.endDate);
+}
+
+function buildDateRange(from, to) {
   const dates = [];
-  const start = parseDateKey(state.dateFrom);
-  const end = parseDateKey(state.dateTo);
+  const start = parseDateKey(from);
+  const end = parseDateKey(to);
   if (!start || !end) return dates;
 
-  for (const current = new Date(start); current <= end; current.setDate(current.getDate() + 1)) {
+  for (const current = new Date(start); current <= end; current.setUTCDate(current.getUTCDate() + 1)) {
     dates.push(dateKey(current));
   }
   return dates;
+}
+
+function earliestDataDate() {
+  const dates = state.models
+    .flatMap((model) => dailyPointsForModel(model).map((point) => point.date))
+    .filter(Boolean)
+    .sort();
+  return dates[0] || dateKey(shiftUtcDays(startOfUtcDay(new Date()), -89));
 }
 
 function periodTotalsForModel(model) {
@@ -761,6 +793,8 @@ async function deleteSelected() {
 
 function openModelDialog(model = null) {
   state.editingModelId = model?.id ?? null;
+  state.pendingAvatarUrl = model?.avatarUrl ?? null;
+  state.clearAvatar = false;
   elements.formError.textContent = "";
   elements.modelFormTitle.textContent = model ? "Edit Fanvue model" : "Add Fanvue model";
   elements.modelSubmitButton.textContent = model ? "Save model" : "Create model";
@@ -768,6 +802,8 @@ function openModelDialog(model = null) {
   elements.modelForm.syncIntervalMinutes.value = model?.syncIntervalMinutes ?? 60;
   elements.modelForm.chartColor.value = model?.chartColor || MODEL_COLORS[0];
   elements.modelForm.enabled.checked = model?.enabled ?? true;
+  document.querySelector("#avatarInput").value = "";
+  renderAvatarPreview(state.pendingAvatarUrl, model?.displayName);
   elements.modelDialog.showModal();
 }
 
@@ -790,8 +826,10 @@ async function saveModel(event) {
     endpointPath: DEFAULT_FANVUE_ENDPOINT,
     syncIntervalMinutes: Number(elements.modelForm.syncIntervalMinutes.value),
     chartColor: elements.modelForm.chartColor.value,
-    enabled: elements.modelForm.enabled.checked
+    enabled: elements.modelForm.enabled.checked,
+    clearAvatar: state.clearAvatar
   };
+  if (state.pendingAvatarUrl) payload.avatarUrl = state.pendingAvatarUrl;
 
   try {
     if (state.editingModelId) {
@@ -939,11 +977,64 @@ function periodBoundsFromPreset(preset, custom = {}) {
   if (preset === "thisMonth") {
     return { preset, startDate: dateKey(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1))), endDate };
   }
+  if (preset === "allTime") {
+    return { preset, startDate: custom.allTimeStart || dateKey(shiftUtcDays(today, -89)), endDate };
+  }
   return {
     preset: "custom",
     startDate: custom.startDate || endDate,
     endDate: custom.endDate || endDate
   };
+}
+
+function comparisonPeriodLabel() {
+  const labels = {
+    last7: "Last 7 days",
+    last14: "Last 14 days",
+    last30: "Last 30 days",
+    allTime: "All time"
+  };
+  return labels[state.comparisonPeriodPreset] || "Selected period";
+}
+
+function modelAvatarHtml(model, color, options = {}) {
+  const label = model?.displayName || "Model";
+  const classes = ["model-avatar", options.small ? "is-small" : ""].filter(Boolean).join(" ");
+  if (model?.avatarUrl) {
+    return `<span class="${classes}" style="--model-color:${color}"><img src="${escapeHtml(model.avatarUrl)}" alt="${escapeHtml(label)}"></span>`;
+  }
+  const initial = escapeHtml(label.trim().charAt(0).toUpperCase() || "?");
+  return `<span class="${classes}" style="--model-color:${color}">${initial}</span>`;
+}
+
+function renderAvatarPreview(avatarUrl, displayName = "Model") {
+  const preview = document.querySelector("#avatarPreview");
+  preview.innerHTML = avatarUrl
+    ? `<img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(displayName)}">`
+    : `<span>${escapeHtml(displayName.trim().charAt(0).toUpperCase() || "?")}</span>`;
+}
+
+async function onAvatarSelected(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  if (file.size > 220_000) {
+    showToast("Choose a smaller image (under 200KB).");
+    event.target.value = "";
+    return;
+  }
+  const dataUrl = await readFileAsDataUrl(file);
+  state.pendingAvatarUrl = dataUrl;
+  state.clearAvatar = false;
+  renderAvatarPreview(dataUrl, elements.modelForm.displayName.value || "Model");
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Could not read image file."));
+    reader.readAsDataURL(file);
+  });
 }
 
 function modelColor(model, index) {
@@ -955,14 +1046,38 @@ function modelInsights(model) {
   const tracking = snapshot?.trackingSummary;
   const audience = snapshot?.audienceSummary;
   const zero = { linkCount: 0, clicks: 0, subscribers: 0, followers: 0, grossRevenueCents: 0, netRevenueCents: 0 };
+  const audienceDaily = (audience?.daily || []).filter((row) => dateInRange(row.date, state.dateFrom, state.dateTo));
+  const links = Array.isArray(tracking?.links) ? tracking.links : [];
+  const internal = aggregateLinkStats(links.filter((link) => link.channel === "internal"));
+  const external = aggregateLinkStats(links.filter((link) => link.channel === "external"));
+
   return {
-    newSubscribers: audience?.newSubscribers ?? 0,
-    newFollowers: audience?.newFollowers ?? 0,
-    internal: tracking?.internal || zero,
-    external: tracking?.external || zero,
-    externalRevenueCents: tracking?.external?.netRevenueCents ?? 0,
-    audienceDaily: Array.isArray(audience?.daily) ? audience.daily : []
+    newSubscribers: sum(audienceDaily.map((row) => row.newSubscribers)) || audience?.newSubscribers || 0,
+    newFollowers: sum(audienceDaily.map((row) => row.newFollowers)) || audience?.newFollowers || 0,
+    internal: links.length ? internal : (tracking?.internal || zero),
+    external: links.length ? external : (tracking?.external || zero),
+    externalRevenueCents: external.netRevenueCents,
+    links,
+    audienceDaily,
+    dataNote: buildInsightsNote(snapshot)
   };
+}
+
+function aggregateLinkStats(links) {
+  return {
+    linkCount: links.length,
+    clicks: sum(links.map((link) => link.clicks)),
+    subscribers: sum(links.map((link) => link.subscribers)),
+    followers: sum(links.map((link) => link.followers)),
+    grossRevenueCents: sum(links.map((link) => link.grossRevenueCents)),
+    netRevenueCents: sum(links.map((link) => link.netRevenueCents))
+  };
+}
+
+function buildInsightsNote(snapshot) {
+  if (!snapshot?.contentErrors) return "";
+  const errors = Object.entries(snapshot.contentErrors).filter(([, message]) => message);
+  return errors.length ? errors.map(([key, message]) => `${key}: ${message}`).join(" · ") : "";
 }
 
 function comparisonPointsForModel(model, insights, dates) {

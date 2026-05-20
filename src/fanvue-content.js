@@ -134,10 +134,6 @@ export async function fetchModelTrackingSummary(accessToken, model, period) {
   for (const path of linkCandidates) {
     try {
       links = await fanvueApiPaginate(accessToken, path, {
-        query: {
-          createdAfter: period.startIso,
-          createdBefore: period.endIso
-        },
         listKeys: ["links", "trackingLinks"]
       });
       if (links.length) break;
@@ -145,7 +141,20 @@ export async function fetchModelTrackingSummary(accessToken, model, period) {
       lastError = error;
     }
   }
-  if (!links.length && lastError) throw lastError;
+  if (!links.length && lastError) {
+    if (isFanvueNotFound(lastError)) {
+      return {
+        creatorUuid,
+        period,
+        links: [],
+        internal: aggregateTrackingChannel([]),
+        external: aggregateTrackingChannel([]),
+        totals: aggregateTrackingChannel([]),
+        warning: "Tracking links API not available. Reconnect with read:tracking_links scope."
+      };
+    }
+    throw lastError;
+  }
 
   const normalized = links.map(normalizeTrackingLink);
   const internal = normalized.filter((link) => link.channel === "internal");
@@ -220,16 +229,31 @@ function normalizePost(item) {
 
 function normalizeTrackingLink(item) {
   const channel = classifyTrackingChannel(item);
+  const stats = item.stats || item.metrics || item.totals || item;
   return {
     id: String(item.uuid || item.id || item.slug || ""),
     name: item.name || item.label || item.slug || "Link",
     slug: item.slug || "",
     channel,
-    clicks: numberValue(item.clicks ?? item.clickCount ?? item.visits),
-    subscribers: numberValue(item.subscribersAcquired ?? item.newSubscribers ?? item.subscribers),
-    followers: numberValue(item.followersAcquired ?? item.newFollowers ?? item.followers),
-    grossRevenueCents: moneyToCents(item.grossEarnings ?? item.grossRevenue ?? item.grossEarningsCents),
-    netRevenueCents: moneyToCents(item.netEarnings ?? item.netRevenue ?? item.netEarningsCents)
+    clicks: numberValue(
+      item.clicks ?? item.clickCount ?? item.visits ?? stats.clicks ?? stats.clickCount ?? stats.visits
+    ),
+    subscribers: numberValue(
+      item.subscribersAcquired ?? item.newSubscribers ?? item.subscribers
+        ?? stats.subscribersAcquired ?? stats.newSubscribers ?? stats.subscribers
+    ),
+    followers: numberValue(
+      item.followersAcquired ?? item.newFollowers ?? item.followers
+        ?? stats.followersAcquired ?? stats.newFollowers ?? stats.followers
+    ),
+    grossRevenueCents: moneyToCents(
+      item.grossEarnings ?? item.grossRevenue ?? item.grossEarningsCents
+        ?? stats.grossEarnings ?? stats.grossRevenue
+    ),
+    netRevenueCents: moneyToCents(
+      item.netEarnings ?? item.netRevenue ?? item.netEarningsCents
+        ?? stats.netEarnings ?? stats.netRevenue
+    )
   };
 }
 
@@ -271,13 +295,19 @@ function extractAudienceRows(payload) {
     : Array.isArray(payload?.data) ? payload.data
     : Array.isArray(payload?.events) ? payload.events
     : Array.isArray(payload?.items) ? payload.items
+    : Array.isArray(payload?.daily) ? payload.daily
+    : Array.isArray(payload?.series) ? payload.series
     : [];
 
   return list.map((row) => ({
-    date: dateKey(row.date || row.day || row.periodStart || row.timestamp),
-    newSubscribers: numberValue(row.newSubscribers ?? row.subscribersAdded ?? row.subscriberEvents?.new),
-    newFollowers: numberValue(row.newFollowers ?? row.followersAdded ?? row.followerEvents?.new),
-    cancelledSubscribers: numberValue(row.cancelledSubscribers ?? row.subscribersCancelled)
+    date: dateKey(row.date || row.day || row.periodStart || row.timestamp || row.startDate),
+    newSubscribers: numberValue(
+      row.newSubscribers ?? row.subscribersAdded ?? row.subscribers ?? row.subscriberEvents?.new ?? row.added
+    ),
+    newFollowers: numberValue(
+      row.newFollowers ?? row.followersAdded ?? row.followers ?? row.followerEvents?.new
+    ),
+    cancelledSubscribers: numberValue(row.cancelledSubscribers ?? row.subscribersCancelled ?? row.churned)
   })).filter((row) => row.date);
 }
 

@@ -28,7 +28,7 @@ loadDotEnv();
 assertSecretConfiguration();
 assertAccessConfiguration();
 
-const MAX_JSON_BODY_BYTES = 64 * 1024;
+const MAX_JSON_BODY_BYTES = 512 * 1024;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
 const store = createStore();

@@ -151,6 +151,15 @@ export function modelFromInput(input, existing = {}) {
     model.chartColor = "";
   }
 
+  if (input.clearAvatar) {
+    model.avatarUrl = null;
+  } else if (typeof input.avatarUrl === "string" && input.avatarUrl.startsWith("data:image/")) {
+    if (input.avatarUrl.length > 280_000) {
+      throw new ValidationError("Profile image is too large. Use a smaller photo (under 200KB).");
+    }
+    model.avatarUrl = input.avatarUrl;
+  }
+
   if (typeof input.apiToken === "string" && input.apiToken.trim()) {
     model.apiTokenEncrypted = encryptSecret(input.apiToken.trim());
   } else if (input.clearToken) {
@@ -172,7 +181,7 @@ export async function syncModel(store, modelId) {
     const apiToken = await accessTokenForModel(store, model);
     const { metrics, raw } = await fetchFanvueMetrics({ ...model, apiToken });
     const capturedAt = metrics.sourceTimestamp ? new Date(metrics.sourceTimestamp).toISOString() : new Date().toISOString();
-    const period = periodBounds("last14");
+    const period = periodBounds("last30");
     const [trackingResult, audienceResult, vaultResult, postsResult] = await Promise.allSettled([
       fetchModelTrackingSummary(apiToken, model, period),
       fetchModelAudienceSummary(apiToken, model, period),
