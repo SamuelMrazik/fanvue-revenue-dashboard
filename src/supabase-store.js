@@ -40,11 +40,7 @@ export class SupabaseStore {
     for (const result of [modelsResult, snapshotsResult, logsResult]) {
       if (result.error) throw new Error(result.error.message);
     }
-    if (metaResult.error && !isMissingMetaTable(metaResult.error)) {
-      throw new Error(metaResult.error.message);
-    }
-
-    const meta = metaResult.data?.data || {};
+    const meta = readMetaPayload(metaResult);
 
     return normalizeDb({
       version: 1,
@@ -100,18 +96,7 @@ export class SupabaseStore {
       data: log
     }));
 
-    const upsertMeta = await this.client.from("tracker_meta").upsert({
-      id: "ops",
-      data: {
-        contentRequests: normalized.contentRequests,
-        driveLinks: normalized.driveLinks,
-        settings: normalized.settings
-      },
-      updated_at: new Date().toISOString()
-    }, { onConflict: "id" });
-    if (upsertMeta.error && !isMissingMetaTable(upsertMeta.error)) {
-      throw new Error(upsertMeta.error.message);
-    }
+    await writeMetaPayload(this.client, normalized);
   }
 
   async replaceChildRows(table, rows, mapper) {
@@ -143,11 +128,44 @@ export class SupabaseStore {
   }
 }
 
+function readMetaPayload(metaResult) {
+  if (!metaResult?.error) return metaResult?.data?.data || {};
+  if (isMissingMetaTable(metaResult.error)) return {};
+  console.warn("tracker_meta read skipped:", metaResult.error.message);
+  return {};
+}
+
+async function writeMetaPayload(client, normalized) {
+  const upsertMeta = await client.from("tracker_meta").upsert({
+    id: "ops",
+    data: {
+      contentRequests: normalized.contentRequests,
+      driveLinks: normalized.driveLinks,
+      settings: normalized.settings
+    },
+    updated_at: new Date().toISOString()
+  }, { onConflict: "id" });
+
+  if (!upsertMeta.error) return;
+  if (isMissingMetaTable(upsertMeta.error)) {
+    console.warn("tracker_meta write skipped:", upsertMeta.error.message);
+    return;
+  }
+  throw new Error(upsertMeta.error.message);
+}
+
 function isMissingMetaTable(error) {
   const code = String(error?.code || "");
+  const hint = String(error?.hint || "").toLowerCase();
+  const details = String(error?.details || "").toLowerCase();
   const message = String(error?.message || "").toLowerCase();
+  const combined = `${message} ${details} ${hint}`;
   return code === "PGRST116"
     || code === "PGRST205"
-    || message.includes("tracker_meta")
-    || message.includes("does not exist");
+    || code === "42P01"
+    || combined.includes("tracker_meta")
+    || combined.includes("tracker meta")
+    || combined.includes("schema cache")
+    || combined.includes("could not find")
+    || combined.includes("does not exist");
 }
