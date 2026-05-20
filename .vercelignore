@@ -1,0 +1,9 @@
+.env
+.env.*
+data/
+.local-backups/
+certs/
+node_modules/
+coverage/
+*.log
+*.zip

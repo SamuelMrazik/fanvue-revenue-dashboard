@@ -1,0 +1,896 @@
+const DEFAULT_FANVUE_API_BASE_URL = "https://api.fanvue.com";
+const DEFAULT_FANVUE_ENDPOINT = "/insights/earnings/summary";
+const FANVUE_FEE_RATE = 15;
+const AGENCY_FEE_RATE = 30;
+const MODEL_COLORS = ["#49f263", "#4ca4f5", "#f5a623", "#ff6f91", "#b982ff", "#2dd4bf", "#f97316", "#eab308"];
+
+const state = {
+  models: [],
+  snapshots: [],
+  syncLogs: [],
+  totals: {},
+  fanvueStatus: { configured: false },
+  selectedModelId: null,
+  editingModelId: null,
+  dateFrom: "",
+  dateTo: "",
+  metricMode: "ownerNet"
+};
+
+const elements = {
+  overviewButton: document.querySelector("#overviewButton"),
+  overviewView: document.querySelector("#overviewView"),
+  modelView: document.querySelector("#modelView"),
+  trackingEmpty: document.querySelector("#trackingEmpty"),
+  pageTitle: document.querySelector("#pageTitle"),
+  modelList: document.querySelector("#modelList"),
+  syncSummary: document.querySelector("#syncSummary"),
+  dateFromInput: document.querySelector("#dateFromInput"),
+  dateToInput: document.querySelector("#dateToInput"),
+  metricModeInput: document.querySelector("#metricModeInput"),
+  primaryMetricLabel: document.querySelector("#primaryMetricLabel"),
+  primaryMetricValue: document.querySelector("#primaryMetricValue"),
+  primaryMetricSubtext: document.querySelector("#primaryMetricSubtext"),
+  overviewGross: document.querySelector("#overviewGross"),
+  overviewAgencyDue: document.querySelector("#overviewAgencyDue"),
+  overviewHealth: document.querySelector("#overviewHealth"),
+  comparisonSubtitle: document.querySelector("#comparisonSubtitle"),
+  comparisonChart: document.querySelector("#comparisonChart"),
+  comparisonLegend: document.querySelector("#comparisonLegend"),
+  modelPerformanceRows: document.querySelector("#modelPerformanceRows"),
+  payoutSummary: document.querySelector("#payoutSummary"),
+  agencyPayoutRows: document.querySelector("#agencyPayoutRows"),
+  modelOwnerNet: document.querySelector("#modelOwnerNet"),
+  modelPeriodLabel: document.querySelector("#modelPeriodLabel"),
+  modelGross: document.querySelector("#modelGross"),
+  modelAgencyDue: document.querySelector("#modelAgencyDue"),
+  modelTopSource: document.querySelector("#modelTopSource"),
+  modelTopSourceShare: document.querySelector("#modelTopSourceShare"),
+  modelChartTitle: document.querySelector("#modelChartTitle"),
+  modelChartSubtitle: document.querySelector("#modelChartSubtitle"),
+  modelChart: document.querySelector("#modelChart"),
+  revenueMix: document.querySelector("#revenueMix"),
+  revenueMixSubtitle: document.querySelector("#revenueMixSubtitle"),
+  dailyRows: document.querySelector("#dailyRows"),
+  syncLogRows: document.querySelector("#syncLogRows"),
+  connectionStatus: document.querySelector("#connectionStatus"),
+  connectionDetails: document.querySelector("#connectionDetails"),
+  modelDialog: document.querySelector("#modelDialog"),
+  modelForm: document.querySelector("#modelForm"),
+  modelFormTitle: document.querySelector("#modelFormTitle"),
+  modelSubmitButton: document.querySelector("#modelSubmitButton"),
+  formError: document.querySelector("#formError"),
+  toast: document.querySelector("#toast")
+};
+
+document.querySelector("#addModelButton").addEventListener("click", () => openModelDialog());
+document.querySelector("#addModelButtonSecondary").addEventListener("click", () => openModelDialog());
+document.querySelector("#trackingEmptyAddButton").addEventListener("click", () => openModelDialog());
+document.querySelector("#refreshButton").addEventListener("click", () => loadSummary());
+document.querySelector("#syncAllButton").addEventListener("click", () => syncAll());
+document.querySelector("#syncSelectedButton").addEventListener("click", () => syncSelected());
+document.querySelector("#editModelButton").addEventListener("click", () => openModelDialog(selectedModel()));
+document.querySelector("#testConnectionButton").addEventListener("click", () => testSelected());
+document.querySelector("#connectFanvueButton").addEventListener("click", () => connectSelectedFanvue());
+document.querySelector("#disconnectFanvueButton").addEventListener("click", () => disconnectSelectedFanvue());
+document.querySelector("#deleteModelButton").addEventListener("click", () => deleteSelected());
+document.querySelector("#closeDialogButton").addEventListener("click", closeDialog);
+document.querySelector("#cancelDialogButton").addEventListener("click", closeDialog);
+elements.overviewButton.addEventListener("click", () => {
+  state.selectedModelId = null;
+  render();
+});
+elements.dateFromInput.addEventListener("change", updatePeriodControls);
+elements.dateToInput.addEventListener("change", updatePeriodControls);
+elements.metricModeInput.addEventListener("change", updatePeriodControls);
+elements.modelForm.addEventListener("submit", saveModel);
+
+handleOAuthReturnParams();
+await loadSummary();
+
+async function loadSummary() {
+  try {
+    const [summary, fanvueStatus] = await Promise.all([
+      api("/api/summary"),
+      api("/api/fanvue/oauth/status")
+    ]);
+    state.models = summary.models;
+    state.snapshots = summary.snapshots;
+    state.syncLogs = summary.syncLogs;
+    state.totals = summary.totals;
+    state.fanvueStatus = fanvueStatus;
+
+    if (state.selectedModelId && !state.models.some((model) => model.id === state.selectedModelId)) {
+      state.selectedModelId = null;
+    }
+
+    initializePeriod();
+    render();
+  } catch (error) {
+    elements.syncSummary.textContent = "Tracker data could not be loaded.";
+    showToast(error.message);
+  }
+}
+
+function render() {
+  const selected = selectedModel();
+  const isModelView = Boolean(selected);
+  const errors = state.totals.errorModels || 0;
+  const ok = state.totals.okModels || 0;
+  const pending = Math.max(state.models.length - ok - errors, 0);
+
+  elements.pageTitle.textContent = selected ? selected.displayName : "All models";
+  elements.syncSummary.textContent = `${ok} healthy · ${errors} failing · ${pending} pending · ${state.models.length} total`;
+  elements.trackingEmpty.hidden = state.models.length > 0;
+  elements.overviewView.hidden = isModelView;
+  elements.modelView.hidden = !isModelView;
+  elements.overviewButton.classList.toggle("active", !isModelView);
+  document.querySelector("#syncAllButton").disabled = !state.models.some(canSyncModel);
+  elements.dateFromInput.value = state.dateFrom;
+  elements.dateToInput.value = state.dateTo;
+  elements.metricModeInput.value = state.metricMode;
+
+  renderModels();
+  renderOverview();
+  renderModelView(selected);
+  renderLogs(selected);
+  renderConnection(selected);
+}
+
+function renderModels() {
+  if (!state.models.length) {
+    elements.modelList.innerHTML = `<p class="empty-note">No models yet.</p>`;
+    return;
+  }
+
+  elements.modelList.innerHTML = state.models.map((model, index) => {
+    const active = model.id === state.selectedModelId ? "active" : "";
+    const color = MODEL_COLORS[index % MODEL_COLORS.length];
+    const latest = latestSnapshotForModel(model.id);
+    const ownerNet = latest ? profitForAggregate(latest).ownerNetCents : 0;
+    return `
+      <button class="model-item ${active}" type="button" data-model-id="${escapeHtml(model.id)}">
+        <strong><i style="--model-color: ${color}"></i>${escapeHtml(model.displayName)}</strong>
+        <span>${escapeHtml(statusLabel(model.lastStatus))} · ${formatMoney(ownerNet)}</span>
+      </button>
+    `;
+  }).join("");
+
+  elements.modelList.querySelectorAll("[data-model-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedModelId = button.dataset.modelId;
+      render();
+    });
+  });
+}
+
+function renderOverview() {
+  const periodRows = state.models.map((model, index) => {
+    const totals = periodTotalsForModel(model);
+    return {
+      model,
+      color: MODEL_COLORS[index % MODEL_COLORS.length],
+      totals,
+      topSource: topSourceForModel(model)
+    };
+  });
+  const grossCents = sum(periodRows.map((row) => row.totals.grossCents));
+  const fanvueNetCents = sum(periodRows.map((row) => row.totals.fanvueNetCents));
+  const ownerNetCents = sum(periodRows.map((row) => row.totals.ownerNetCents));
+  const selectedMetricCents = metricValue({ grossCents, fanvueNetCents, ownerNetCents });
+  const payoutPeriods = agencyPayoutPeriods();
+  const agencyDueCents = sum(periodRows.map((row) => (
+    payoutTotalForModel(row.model, payoutPeriods.fifteenth) + payoutTotalForModel(row.model, payoutPeriods.twentySeventh)
+  )));
+  const connected = state.models.filter(canSyncModel).length;
+
+  elements.primaryMetricLabel.textContent = `Combined ${metricLabel(state.metricMode).toLowerCase()}`;
+  elements.primaryMetricValue.textContent = formatMoney(selectedMetricCents);
+  elements.primaryMetricSubtext.textContent = periodLabel();
+  elements.overviewGross.textContent = formatMoney(grossCents);
+  elements.overviewAgencyDue.textContent = formatMoney(agencyDueCents);
+  elements.overviewHealth.textContent = `${connected}/${state.models.length}`;
+
+  renderComparisonChart(periodRows);
+  renderPerformanceTable(periodRows);
+  renderAgencyPayouts(periodRows);
+}
+
+function renderComparisonChart(rows) {
+  const dates = selectedDateRange();
+  const series = rows
+    .map((row) => ({
+      label: row.model.displayName,
+      color: row.color,
+      points: pointsForModel(row.model, dates).map((point) => ({
+        date: point.date,
+        value: metricValue(point)
+      }))
+    }))
+    .filter((serie) => serie.points.some((point) => point.value > 0));
+
+  elements.comparisonSubtitle.textContent = `${metricLabel(state.metricMode)} · ${periodLabel()}`;
+  elements.comparisonChart.innerHTML = lineChartSvg(series, dates, { empty: "No daily earnings in this period yet." });
+  elements.comparisonLegend.innerHTML = series.map((serie) => `
+    <span><i style="--model-color: ${serie.color}"></i>${escapeHtml(serie.label)}</span>
+  `).join("") || `<span>No synced model data</span>`;
+}
+
+function renderPerformanceTable(rows) {
+  const sortedRows = [...rows].sort((a, b) => b.totals.ownerNetCents - a.totals.ownerNetCents);
+  elements.modelPerformanceRows.innerHTML = sortedRows.map((row) => `
+    <tr>
+      <td>
+        <button class="table-model-button" type="button" data-row-model-id="${escapeHtml(row.model.id)}">
+          <i style="--model-color: ${row.color}"></i>${escapeHtml(row.model.displayName)}
+        </button>
+      </td>
+      <td>${formatMoney(row.totals.grossCents)}</td>
+      <td>${formatMoney(row.totals.ownerNetCents)}</td>
+      <td>${formatMoney(row.totals.agencyFeeCents)}</td>
+      <td>${escapeHtml(row.topSource.label)}${row.topSource.value ? ` · ${formatPercent(row.topSource.share)}` : ""}</td>
+      <td><span class="pill ${statusClass(row.model.lastStatus)}">${escapeHtml(statusLabel(row.model.lastStatus))}</span></td>
+    </tr>
+  `).join("") || `<tr><td colspan="6">No models in this period.</td></tr>`;
+
+  elements.modelPerformanceRows.querySelectorAll("[data-row-model-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedModelId = button.dataset.rowModelId;
+      render();
+    });
+  });
+}
+
+function renderAgencyPayouts(rows) {
+  const periods = agencyPayoutPeriods();
+  const payoutRows = rows.map((row) => ({
+    ...row,
+    fifteenth: payoutTotalForModel(row.model, periods.fifteenth),
+    twentySeventh: payoutTotalForModel(row.model, periods.twentySeventh)
+  }));
+  const fifteenthTotal = sum(payoutRows.map((row) => row.fifteenth));
+  const twentySeventhTotal = sum(payoutRows.map((row) => row.twentySeventh));
+
+  elements.payoutSummary.innerHTML = `
+    <div><span>${escapeHtml(periods.fifteenth.label)}</span><strong>${formatMoney(fifteenthTotal)}</strong></div>
+    <div><span>${escapeHtml(periods.twentySeventh.label)}</span><strong>${formatMoney(twentySeventhTotal)}</strong></div>
+  `;
+  elements.agencyPayoutRows.innerHTML = payoutRows
+    .filter((row) => row.fifteenth > 0 || row.twentySeventh > 0)
+    .map((row) => `
+      <tr>
+        <td>${escapeHtml(row.model.displayName)}</td>
+        <td>${formatMoney(row.fifteenth)}</td>
+        <td>${formatMoney(row.twentySeventh)}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="3">No agency payout due from synced daily earnings yet.</td></tr>`;
+}
+
+function renderModelView(model) {
+  if (!model) return;
+
+  const totals = periodTotalsForModel(model);
+  const topSource = topSourceForModel(model);
+  const currentPayout = payoutTotalForModel(model, currentAgencyPeriod());
+
+  elements.modelOwnerNet.textContent = formatMoney(totals.ownerNetCents);
+  elements.modelPeriodLabel.textContent = periodLabel();
+  elements.modelGross.textContent = formatMoney(totals.grossCents);
+  elements.modelAgencyDue.textContent = formatMoney(currentPayout);
+  elements.modelTopSource.textContent = topSource.label;
+  elements.modelTopSourceShare.textContent = topSource.value ? `${formatMoney(topSource.value)} · ${formatPercent(topSource.share)}` : "No synced revenue";
+  elements.modelChartTitle.textContent = `${model.displayName} daily ${metricLabel(state.metricMode).toLowerCase()}`;
+  elements.modelChartSubtitle.textContent = periodLabel();
+
+  const dates = selectedDateRange();
+  const modelIndex = state.models.findIndex((item) => item.id === model.id);
+  const color = MODEL_COLORS[Math.max(modelIndex, 0) % MODEL_COLORS.length];
+  const points = pointsForModel(model, dates).map((point) => ({ date: point.date, value: metricValue(point) }));
+  elements.modelChart.innerHTML = lineChartSvg([{ label: model.displayName, color, points }], dates, { empty: "No daily earnings in this period yet." });
+
+  renderRevenueMix(model);
+  renderDailyRows(model);
+}
+
+function renderRevenueMix(model) {
+  const snapshot = latestSnapshotForModel(model.id);
+  if (!snapshot) {
+    elements.revenueMixSubtitle.textContent = "Latest source split";
+    elements.revenueMix.innerHTML = `<div class="chart-empty compact-empty">No revenue mix synced yet.</div>`;
+    return;
+  }
+
+  elements.revenueMixSubtitle.textContent = `${formatDate(snapshot.capturedAt)} source split`;
+  const rows = sourceRows(snapshot).filter((row) => row.value > 0);
+  const total = sum(rows.map((row) => row.value));
+  if (!rows.length || total <= 0) {
+    elements.revenueMix.innerHTML = `<div class="chart-empty compact-empty">No source breakdown available.</div>`;
+    return;
+  }
+
+  elements.revenueMix.innerHTML = rows.map((row) => {
+    const percent = row.value / total;
+    return `
+      <div class="mix-row">
+        <div>
+          <strong>${escapeHtml(row.label)}</strong>
+          <span>${formatMoney(row.value)} · ${formatPercent(percent)}</span>
+        </div>
+        <i style="--mix-width: ${Math.max(percent * 100, 2).toFixed(2)}%"></i>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderDailyRows(model) {
+  const rows = dailyPointsForModel(model)
+    .filter((point) => dateInRange(point.date, state.dateFrom, state.dateTo))
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  elements.dailyRows.innerHTML = rows.map((row) => `
+    <tr>
+      <td>${formatShortDate(row.date)}</td>
+      <td>${formatMoney(row.grossCents)}</td>
+      <td>${formatMoney(row.ownerNetCents)}</td>
+      <td>${formatMoney(row.agencyFeeCents)}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="4">No daily earnings in this period.</td></tr>`;
+}
+
+function renderLogs(model) {
+  const modelNames = new Map(state.models.map((item) => [item.id, item.displayName]));
+  const logs = model ? state.syncLogs.filter((log) => log.modelId === model.id) : state.syncLogs;
+  const rows = logs.slice(0, 12).map((log) => `
+    <tr>
+      <td>${formatDate(log.finishedAt || log.startedAt)}</td>
+      <td>${escapeHtml(modelNames.get(log.modelId) || "Removed model")}</td>
+      <td><span class="pill ${statusClass(log.status)}">${escapeHtml(statusLabel(log.status))}</span></td>
+      <td>${escapeHtml(log.message || "Completed")}</td>
+    </tr>
+  `);
+
+  elements.syncLogRows.innerHTML = rows.join("") || `<tr><td colspan="4">No sync runs yet.</td></tr>`;
+}
+
+function renderConnection(model) {
+  const syncButton = document.querySelector("#syncSelectedButton");
+  const editButton = document.querySelector("#editModelButton");
+  const testButton = document.querySelector("#testConnectionButton");
+  const connectButton = document.querySelector("#connectFanvueButton");
+  const disconnectButton = document.querySelector("#disconnectFanvueButton");
+  const deleteButton = document.querySelector("#deleteModelButton");
+  const canSync = canSyncModel(model);
+
+  [editButton, connectButton, deleteButton].forEach((button) => {
+    button.disabled = !model;
+  });
+  syncButton.disabled = !canSync;
+  testButton.disabled = !canSync;
+
+  if (!model) {
+    elements.connectionStatus.textContent = "No model selected";
+    elements.connectionDetails.innerHTML = "";
+    disconnectButton.hidden = true;
+    disconnectButton.disabled = true;
+    return;
+  }
+
+  const oauthConnected = Boolean(model.fanvueOAuth?.connected);
+  connectButton.textContent = oauthConnected ? "Reconnect Fanvue" : "Connect Fanvue";
+  disconnectButton.hidden = !oauthConnected;
+  disconnectButton.disabled = !oauthConnected;
+  elements.connectionStatus.textContent = model.lastError || statusLabel(model.lastStatus);
+  elements.connectionDetails.innerHTML = detailRows([
+    ["Fanvue", oauthConnected ? `Connected${model.fanvueOAuth.expiresAt ? ` until ${formatDate(model.fanvueOAuth.expiresAt)}` : ""}` : fanvueConfigLabel()],
+    ["Profile", oauthConnected ? fanvueProfileLabel(model.fanvueOAuth.profile) : "Not connected"],
+    ["Last sync", model.lastSyncAt ? formatDate(model.lastSyncAt) : "Never"],
+    ["Next sync", model.nextSyncAt ? formatDate(model.nextSyncAt) : "Not scheduled"],
+    ["Interval", `${model.syncIntervalMinutes} minutes`],
+    ["Enabled", model.enabled ? "Yes" : "No"]
+  ]);
+}
+
+function lineChartSvg(series, dates, options = {}) {
+  const activeSeries = series.filter((serie) => serie.points.length);
+  if (!activeSeries.length || !dates.length) {
+    return `<div class="chart-empty">${escapeHtml(options.empty || "No chart data yet.")}</div>`;
+  }
+
+  const width = 920;
+  const height = 326;
+  const padding = { top: 32, right: 24, bottom: 42, left: 58 };
+  const values = activeSeries.flatMap((serie) => serie.points.map((point) => point.value));
+  const max = Math.max(...values, 1);
+  const xForIndex = (index) => padding.left + (index / Math.max(dates.length - 1, 1)) * (width - padding.left - padding.right);
+  const yForValue = (value) => height - padding.bottom - (value / max) * (height - padding.top - padding.bottom);
+  const xByDate = new Map(dates.map((date, index) => [date, xForIndex(index)]));
+  const lines = activeSeries.map((serie) => {
+    const points = serie.points.map((point) => `${xByDate.get(point.date)},${yForValue(point.value)}`).join(" ");
+    return `<polyline class="chart-line" style="--line-color: ${serie.color}" points="${points}"></polyline>`;
+  }).join("");
+
+  return `
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Revenue timeline">
+      <path class="chart-grid" d="M ${padding.left} ${yForValue(max)} H ${width - padding.right} M ${padding.left} ${yForValue(max / 2)} H ${width - padding.right} M ${padding.left} ${yForValue(0)} H ${width - padding.right}"></path>
+      <text x="${padding.left}" y="20" fill="currentColor" font-size="13">${formatMoney(max)}</text>
+      <text x="${padding.left}" y="${height - 14}" fill="currentColor" font-size="13">${formatShortDate(dates[0])}</text>
+      <text x="${width - padding.right - 96}" y="${height - 14}" fill="currentColor" font-size="13">${formatShortDate(dates.at(-1))}</text>
+      ${lines}
+    </svg>
+  `;
+}
+
+function initializePeriod() {
+  if (state.dateFrom && state.dateTo) return;
+
+  const dates = state.models.flatMap((model) => dailyPointsForModel(model).map((point) => point.date)).sort();
+  const today = dateKey(new Date());
+  state.dateFrom = dates[0] || monthStart(today);
+  state.dateTo = dates.at(-1) || today;
+}
+
+function updatePeriodControls() {
+  state.dateFrom = elements.dateFromInput.value || state.dateFrom;
+  state.dateTo = elements.dateToInput.value || state.dateTo;
+  if (state.dateFrom > state.dateTo) {
+    [state.dateFrom, state.dateTo] = [state.dateTo, state.dateFrom];
+  }
+  state.metricMode = elements.metricModeInput.value;
+  render();
+}
+
+function selectedDateRange() {
+  const dates = [];
+  const start = parseDateKey(state.dateFrom);
+  const end = parseDateKey(state.dateTo);
+  if (!start || !end) return dates;
+
+  for (const current = new Date(start); current <= end; current.setDate(current.getDate() + 1)) {
+    dates.push(dateKey(current));
+  }
+  return dates;
+}
+
+function periodTotalsForModel(model) {
+  const points = dailyPointsForModel(model).filter((point) => dateInRange(point.date, state.dateFrom, state.dateTo));
+  if (points.length) {
+    return {
+      grossCents: sum(points.map((point) => point.grossCents)),
+      fanvueNetCents: sum(points.map((point) => point.fanvueNetCents)),
+      ownerNetCents: sum(points.map((point) => point.ownerNetCents)),
+      agencyFeeCents: sum(points.map((point) => point.agencyFeeCents))
+    };
+  }
+
+  const latest = latestSnapshotForModel(model.id);
+  if (!latest || !dateInRange(dateKey(latest.capturedAt), state.dateFrom, state.dateTo)) {
+    return zeroTotals();
+  }
+  return profitForAggregate(latest);
+}
+
+function pointsForModel(model, dates) {
+  const pointsByDate = new Map(dailyPointsForModel(model).map((point) => [point.date, point]));
+  return dates.map((date) => pointsByDate.get(date) || { date, ...zeroTotals() });
+}
+
+function dailyPointsForModel(model) {
+  const latest = latestSnapshotForModel(model.id);
+  const daily = Array.isArray(latest?.dailyEarnings) ? latest.dailyEarnings : [];
+  if (daily.length) {
+    return daily.map((point) => dailyProfitPoint(point.date, point.grossRevenueCents || 0, point.fanvueNetCents || 0));
+  }
+
+  if (latest?.capturedAt) {
+    const profit = profitForAggregate(latest);
+    return [{ date: dateKey(latest.capturedAt), ...profit }];
+  }
+  return [];
+}
+
+function dailyProfitPoint(date, grossCents, fanvueNetCents) {
+  const normalizedGross = grossCents || deriveGrossFromNet(fanvueNetCents);
+  const normalizedFanvueNet = fanvueNetCents || Math.round(normalizedGross * (1 - FANVUE_FEE_RATE / 100));
+  const agencyFeeCents = Math.round(normalizedFanvueNet * AGENCY_FEE_RATE / 100);
+  return {
+    date: dateKey(date),
+    grossCents: normalizedGross,
+    fanvueNetCents: normalizedFanvueNet,
+    ownerNetCents: Math.max(normalizedFanvueNet - agencyFeeCents, 0),
+    agencyFeeCents
+  };
+}
+
+function profitForAggregate(snapshot) {
+  const fanvueNetCents = snapshot?.fanvueNetCents ?? snapshot?.revenueCents ?? 0;
+  const grossCents = snapshot?.grossRevenueCents ?? deriveGrossFromNet(fanvueNetCents);
+  const agencyFeeCents = Math.round(fanvueNetCents * AGENCY_FEE_RATE / 100);
+  return {
+    grossCents,
+    fanvueNetCents,
+    ownerNetCents: Math.max(fanvueNetCents - agencyFeeCents, 0),
+    agencyFeeCents
+  };
+}
+
+function zeroTotals() {
+  return { grossCents: 0, fanvueNetCents: 0, ownerNetCents: 0, agencyFeeCents: 0 };
+}
+
+function deriveGrossFromNet(fanvueNetCents) {
+  return Math.round((fanvueNetCents || 0) / (1 - FANVUE_FEE_RATE / 100));
+}
+
+function metricValue(point) {
+  if (state.metricMode === "gross") return point.grossCents;
+  if (state.metricMode === "fanvueNet") return point.fanvueNetCents;
+  return point.ownerNetCents;
+}
+
+function metricLabel(metric) {
+  return {
+    gross: "Gross revenue",
+    fanvueNet: "Fanvue net",
+    ownerNet: "Owner net"
+  }[metric] || "Owner net";
+}
+
+function topSourceForModel(model) {
+  const snapshot = latestSnapshotForModel(model.id);
+  if (!snapshot) return { label: "None", value: 0, share: 0 };
+
+  const rows = sourceRows(snapshot);
+  const total = sum(rows.map((row) => row.value));
+  const top = rows.sort((a, b) => b.value - a.value)[0];
+  if (!top?.value || !total) return { label: "None", value: 0, share: 0 };
+  return { ...top, share: top.value / total };
+}
+
+function sourceRows(snapshot) {
+  return [
+    { label: "Messages", value: snapshot.messageRevenueCents || 0 },
+    { label: "Renewals", value: snapshot.renewalRevenueCents || 0 },
+    { label: "Tips", value: snapshot.tipsCents || 0 },
+    { label: "Subscriptions", value: snapshot.subscriptionRevenueCents || 0 },
+    { label: "Posts", value: snapshot.postRevenueCents || 0 },
+    { label: "Referrals", value: snapshot.referralRevenueCents || 0 },
+    { label: "Other", value: snapshot.otherRevenueCents || 0 }
+  ];
+}
+
+function agencyPayoutPeriods() {
+  const anchor = parseDateKey(state.dateTo) || new Date();
+  const year = anchor.getFullYear();
+  const month = anchor.getMonth();
+  return {
+    fifteenth: {
+      label: "Due 15th",
+      start: dateKey(new Date(year, month, 1)),
+      end: dateKey(new Date(year, month, 15))
+    },
+    twentySeventh: {
+      label: "Due 27th",
+      start: dateKey(new Date(year, month, 16)),
+      end: dateKey(new Date(year, month, 27))
+    }
+  };
+}
+
+function currentAgencyPeriod() {
+  const periods = agencyPayoutPeriods();
+  const day = (parseDateKey(state.dateTo) || new Date()).getDate();
+  return day <= 15 ? periods.fifteenth : periods.twentySeventh;
+}
+
+function payoutTotalForModel(model, period) {
+  return sum(dailyPointsForModel(model)
+    .filter((point) => dateInRange(point.date, period.start, period.end))
+    .map((point) => point.agencyFeeCents));
+}
+
+function latestSnapshotForModel(modelId) {
+  return state.snapshots
+    .filter((snapshot) => snapshot.modelId === modelId)
+    .sort((a, b) => new Date(a.capturedAt) - new Date(b.capturedAt))
+    .at(-1) ?? null;
+}
+
+function selectedModel() {
+  return state.models.find((model) => model.id === state.selectedModelId) ?? null;
+}
+
+function canSyncModel(model) {
+  return Boolean(model?.fanvueOAuth?.connected || model?.apiTokenConfigured);
+}
+
+async function syncSelected() {
+  const model = selectedModel();
+  if (!model) return;
+  await syncModelById(model.id, document.querySelector("#syncSelectedButton"));
+}
+
+async function syncModelById(modelId, button) {
+  await withBusyButton(button, "Syncing", async () => {
+    await api(`/api/models/${modelId}/sync`, { method: "POST" });
+    showToast("Sync completed");
+    await loadSummary();
+  });
+}
+
+async function testSelected() {
+  const model = selectedModel();
+  if (!model) return;
+  await testModelById(model.id, document.querySelector("#testConnectionButton"));
+}
+
+async function testModelById(modelId, button) {
+  await withBusyButton(button, "Testing", async () => {
+    await api(`/api/models/${modelId}/test`, { method: "POST" });
+    showToast("Connection test passed");
+    await loadSummary();
+  });
+}
+
+async function connectSelectedFanvue() {
+  const model = selectedModel();
+  if (!model) return;
+  await connectFanvueById(model.id);
+}
+
+async function connectFanvueById(modelId) {
+  try {
+    const result = await api(`/api/models/${modelId}/fanvue/connect`, { method: "POST" });
+    window.location.href = result.authorizationUrl;
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function disconnectSelectedFanvue() {
+  const model = selectedModel();
+  if (!model) return;
+  await disconnectFanvueById(model.id);
+}
+
+async function disconnectFanvueById(modelId) {
+  const model = state.models.find((item) => item.id === modelId);
+  if (!model) return;
+
+  const confirmed = confirm(`Disconnect Fanvue OAuth for ${model.displayName}? Existing revenue data will stay.`);
+  if (!confirmed) return;
+
+  await api(`/api/models/${modelId}/fanvue/disconnect`, { method: "POST" });
+  showToast("Fanvue disconnected");
+  await loadSummary();
+}
+
+async function syncAll() {
+  await withBusyButton(document.querySelector("#syncAllButton"), "Syncing", async () => {
+    const result = await api("/api/sync-all", { method: "POST" });
+    const failures = result.results.filter((item) => item.status === "error").length;
+    showToast(failures ? `Sync finished with ${failures} failure${failures === 1 ? "" : "s"}` : "All models synced");
+    await loadSummary();
+  });
+}
+
+async function deleteSelected() {
+  const model = selectedModel();
+  if (!model) return;
+
+  const confirmed = confirm(`Delete ${model.displayName} and its stored revenue data?`);
+  if (!confirmed) return;
+
+  await api(`/api/models/${model.id}`, { method: "DELETE" });
+  state.selectedModelId = null;
+  showToast("Model deleted");
+  await loadSummary();
+}
+
+function openModelDialog(model = null) {
+  state.editingModelId = model?.id ?? null;
+  elements.formError.textContent = "";
+  elements.modelFormTitle.textContent = model ? "Edit Fanvue model" : "Add Fanvue model";
+  elements.modelSubmitButton.textContent = model ? "Save model" : "Create model";
+  elements.modelForm.displayName.value = model?.displayName ?? "";
+  elements.modelForm.syncIntervalMinutes.value = model?.syncIntervalMinutes ?? 60;
+  elements.modelForm.enabled.checked = model?.enabled ?? true;
+  elements.modelDialog.showModal();
+}
+
+function closeDialog() {
+  elements.modelDialog.close();
+}
+
+async function saveModel(event) {
+  event.preventDefault();
+  elements.formError.textContent = "";
+
+  const submitButton = elements.modelForm.querySelector('button[type="submit"]');
+  const originalText = submitButton.textContent;
+  submitButton.disabled = true;
+  submitButton.textContent = "Saving";
+
+  const payload = {
+    displayName: elements.modelForm.displayName.value,
+    apiBaseUrl: DEFAULT_FANVUE_API_BASE_URL,
+    endpointPath: DEFAULT_FANVUE_ENDPOINT,
+    syncIntervalMinutes: Number(elements.modelForm.syncIntervalMinutes.value),
+    enabled: elements.modelForm.enabled.checked
+  };
+
+  try {
+    if (state.editingModelId) {
+      await api(`/api/models/${state.editingModelId}`, { method: "PATCH", body: payload });
+      showToast("Fanvue model updated");
+    } else {
+      const created = await api("/api/models", { method: "POST", body: payload });
+      state.selectedModelId = created.id;
+      showToast("Fanvue model added");
+    }
+    closeDialog();
+    await loadSummary();
+  } catch (error) {
+    elements.formError.textContent = error.message;
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = originalText;
+  }
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    method: options.method || "GET",
+    headers: options.body ? { "content-type": "application/json" } : undefined,
+    body: options.body ? JSON.stringify(options.body) : undefined
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || "Request failed");
+  return payload;
+}
+
+async function withBusyButton(button, label, task) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = label;
+  try {
+    await task();
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+function detailRows(rows) {
+  return rows.map(([label, value]) => `
+    <div>
+      <dt>${escapeHtml(label)}</dt>
+      <dd>${escapeHtml(value ?? "")}</dd>
+    </div>
+  `).join("");
+}
+
+function handleOAuthReturnParams() {
+  const params = new URLSearchParams(window.location.search);
+  const fanvue = params.get("fanvue");
+  const modelId = params.get("modelId");
+  if (!fanvue) return;
+
+  if (modelId) state.selectedModelId = modelId;
+  if (fanvue === "connected") showToast("Fanvue connected");
+  if (fanvue === "error") showToast(params.get("message") || "Fanvue connection failed");
+  window.history.replaceState({}, document.title, window.location.pathname);
+}
+
+function fanvueConfigLabel() {
+  return state.fanvueStatus.configured ? "Ready to connect" : "Set FANVUE_CLIENT_ID, FANVUE_CLIENT_SECRET, and FANVUE_REDIRECT_URI in .env";
+}
+
+function fanvueProfileLabel(profile) {
+  if (!profile) return "Connected";
+  return profile.handle || profile.displayName || profile.email || profile.uuid || "Connected";
+}
+
+function statusClass(status) {
+  if (status === "ok") return "ok";
+  if (status === "error") return "error";
+  return "pending";
+}
+
+function statusLabel(status) {
+  return {
+    ok: "Healthy",
+    error: "Failing",
+    pending: "Pending"
+  }[status] || status || "Pending";
+}
+
+function trendName(value) {
+  if (value > 0) return "up";
+  if (value < 0) return "down";
+  return "flat";
+}
+
+function dateInRange(date, from, to) {
+  const key = dateKey(date);
+  return (!from || key >= from) && (!to || key <= to);
+}
+
+function dateKey(value) {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function parseDateKey(value) {
+  if (!value) return null;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function monthStart(value) {
+  const date = parseDateKey(value) || new Date();
+  return dateKey(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1)));
+}
+
+function periodLabel() {
+  if (!state.dateFrom || !state.dateTo) return "Selected period";
+  return `${formatShortDate(state.dateFrom)} to ${formatShortDate(state.dateTo)}`;
+}
+
+function formatMoney(cents = 0) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0
+  }).format((cents || 0) / 100);
+}
+
+function formatPercent(value = 0) {
+  return new Intl.NumberFormat("en-US", {
+    style: "percent",
+    maximumFractionDigits: 1
+  }).format(value || 0);
+}
+
+function formatDate(value) {
+  if (!value) return "Never";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function formatShortDate(value) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric"
+  }).format(new Date(`${dateKey(value)}T00:00:00.000Z`));
+}
+
+function sum(values) {
+  return values.reduce((total, value) => total + (Number(value) || 0), 0);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function showToast(message) {
+  elements.toast.textContent = message;
+  elements.toast.classList.add("show");
+  clearTimeout(showToast.timeout);
+  showToast.timeout = setTimeout(() => {
+    elements.toast.classList.remove("show");
+  }, 3200);
+}
