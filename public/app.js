@@ -69,6 +69,7 @@ const elements = {
   dateToInput: document.querySelector("#dateToInput"),
   metricModeInput: document.querySelector("#metricModeInput"),
   modelTableSubtitle: document.querySelector("#modelTableSubtitle"),
+  syncHintBanner: document.querySelector("#syncHintBanner"),
   vaRequestsStrip: document.querySelector("#vaRequestsStrip"),
   openVaRequestsCount: document.querySelector("#openVaRequestsCount"),
   vaultSubtitle: document.querySelector("#vaultSubtitle"),
@@ -126,6 +127,7 @@ document.querySelector("#addModelButtonSecondary").addEventListener("click", () 
 document.querySelector("#trackingEmptyAddButton").addEventListener("click", () => openModelDialog());
 document.querySelector("#refreshButton").addEventListener("click", () => loadSummary());
 document.querySelector("#syncAllButton").addEventListener("click", () => syncAll());
+document.querySelector("#syncHintButton")?.addEventListener("click", () => syncAll());
 document.querySelector("#syncSelectedButton").addEventListener("click", () => syncSelected());
 document.querySelector("#editModelButton").addEventListener("click", () => openModelDialog(selectedModel()));
 document.querySelector("#testConnectionButton").addEventListener("click", () => testSelected());
@@ -292,6 +294,7 @@ function render() {
   }
 
   renderVaRequestsStrip(openRequests);
+  renderSyncHint();
   renderModels();
   if (isOverview) renderOverview();
   if (isContentDrive) renderContentDrive();
@@ -364,9 +367,16 @@ function renderOverview() {
     payoutTotalForModel(row.model, payoutPeriods.fifteenth) + payoutTotalForModel(row.model, payoutPeriods.twentySeventh)
   )));
 
+  const hasSnapshots = state.snapshots.length > 0;
+  const needsSync = state.models.length > 0 && !hasSnapshots;
+
   elements.primaryMetricValue.textContent = formatMoney(ownerNetCents);
-  elements.primaryMetricSubtext.textContent = periodLabel();
-  elements.modelTableSubtitle.textContent = `${periodLabel()} · sorted by owner net`;
+  elements.primaryMetricSubtext.textContent = needsSync
+    ? "Models found — run Sync all to load revenue"
+    : periodLabel();
+  elements.modelTableSubtitle.textContent = needsSync
+    ? "No synced snapshots yet — click Sync all in the top bar"
+    : `${periodLabel()} · sorted by owner net`;
   elements.overviewGross.textContent = formatMoney(grossCents);
   elements.overviewAgencyDue.textContent = formatMoney(agencyDueCents);
 
@@ -512,6 +522,13 @@ function renderVaRequestsStrip(openRequests) {
   if (!elements.vaRequestsStrip) return;
   elements.vaRequestsStrip.hidden = openRequests <= 0;
   elements.openVaRequestsCount.textContent = String(openRequests);
+}
+
+function renderSyncHint() {
+  if (!elements.syncHintBanner) return;
+  const connected = state.models.filter(canSyncModel).length;
+  const hasSnapshots = state.snapshots.length > 0;
+  elements.syncHintBanner.hidden = !(connected > 0 && !hasSnapshots);
 }
 
 function renderModelProfileHeader(model) {
@@ -768,9 +785,7 @@ function periodTotalsForModel(model) {
   }
 
   const latest = latestSnapshotForModel(model.id);
-  if (!latest || !dateInRange(dateKey(latest.capturedAt), state.dateFrom, state.dateTo)) {
-    return zeroTotals();
-  }
+  if (!latest) return zeroTotals();
   return profitForAggregate(latest);
 }
 

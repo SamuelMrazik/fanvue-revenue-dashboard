@@ -40,7 +40,7 @@ export class SupabaseStore {
     for (const result of [modelsResult, snapshotsResult, logsResult]) {
       if (result.error) throw new Error(result.error.message);
     }
-    if (metaResult.error && metaResult.error.code !== "PGRST116") {
+    if (metaResult.error && !isMissingMetaTable(metaResult.error)) {
       throw new Error(metaResult.error.message);
     }
 
@@ -109,14 +109,16 @@ export class SupabaseStore {
       },
       updated_at: new Date().toISOString()
     }, { onConflict: "id" });
-    if (upsertMeta.error) throw new Error(upsertMeta.error.message);
+    if (upsertMeta.error && !isMissingMetaTable(upsertMeta.error)) {
+      throw new Error(upsertMeta.error.message);
+    }
   }
 
   async replaceChildRows(table, rows, mapper) {
+    if (!rows.length) return;
+
     const deleteAll = await this.client.from(table).delete().neq("id", "");
     if (deleteAll.error) throw new Error(deleteAll.error.message);
-
-    if (!rows.length) return;
 
     const payload = rows.map(mapper);
     const chunkSize = 500;
@@ -139,4 +141,13 @@ export class SupabaseStore {
     this.writeQueue = result.catch(() => {});
     return result;
   }
+}
+
+function isMissingMetaTable(error) {
+  const code = String(error?.code || "");
+  const message = String(error?.message || "").toLowerCase();
+  return code === "PGRST116"
+    || code === "PGRST205"
+    || message.includes("tracker_meta")
+    || message.includes("does not exist");
 }

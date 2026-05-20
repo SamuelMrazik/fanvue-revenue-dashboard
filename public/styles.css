@@ -1285,6 +1285,24 @@ th {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.sync-hint-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 16px 18px;
+  border-radius: var(--radius);
+  border: 1px solid rgb(251 191 36 / 0.35);
+  background: rgb(251 191 36 / 0.1);
+}
+
+.sync-hint-banner p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .va-requests-strip {
   margin-bottom: 18px;
 }
