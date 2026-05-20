@@ -645,6 +645,10 @@ th {
   margin-bottom: 18px;
 }
 
+.connection-error {
+  color: #fda4af;
+}
+
 .connection-list {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

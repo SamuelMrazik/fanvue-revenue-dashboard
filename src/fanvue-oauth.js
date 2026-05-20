@@ -156,11 +156,27 @@ async function refreshFanvueToken(store, modelId) {
     throw httpError(400, "Model is not connected to Fanvue OAuth.");
   }
 
-  const refreshToken = decryptSecret(model.fanvueOAuth.refreshTokenEncrypted);
-  const tokens = await exchangeToken({
-    grant_type: "refresh_token",
-    refresh_token: refreshToken
-  });
+  let refreshToken = "";
+  try {
+    refreshToken = decryptSecret(model.fanvueOAuth.refreshTokenEncrypted);
+  } catch {
+    await markFanvueReconnectRequired(store, modelId, "Fanvue tokens could not be decrypted. Reconnect this model.");
+    throw httpError(400, "Fanvue connection must be renewed. Click Reconnect Fanvue on this model.");
+  }
+
+  let tokens;
+  try {
+    tokens = await exchangeToken({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken
+    });
+  } catch (error) {
+    if (isInvalidGrantError(error)) {
+      await markFanvueReconnectRequired(store, modelId, error.message);
+      throw httpError(400, "Fanvue session expired. Click Reconnect Fanvue, complete login, then Sync now.");
+    }
+    throw error;
+  }
 
   let accessToken = tokens.access_token;
   await store.update((nextDb) => {
@@ -289,6 +305,26 @@ function base64Url(buffer) {
     .replaceAll("=", "")
     .replaceAll("+", "-")
     .replaceAll("/", "_");
+}
+
+async function markFanvueReconnectRequired(store, modelId, message) {
+  await store.update((db) => {
+    const model = db.models.find((item) => item.id === modelId);
+    if (!model) return;
+    model.fanvueOAuth = null;
+    model.lastStatus = "error";
+    model.lastError = message;
+    model.updatedAt = new Date().toISOString();
+  });
+}
+
+function isInvalidGrantError(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return error?.statusCode === 400
+    && (message.includes("refresh token")
+      || message.includes("invalid_grant")
+      || message.includes("authorization grant")
+      || message.includes("malformed"));
 }
 
 function httpError(statusCode, message) {

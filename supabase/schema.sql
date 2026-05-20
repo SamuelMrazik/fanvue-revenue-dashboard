@@ -42,3 +42,5 @@ create table if not exists tracker_meta (
   data jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
 );
+
+alter table tracker_meta enable row level security;

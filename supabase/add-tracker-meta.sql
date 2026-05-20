@@ -7,5 +7,6 @@ create table if not exists tracker_meta (
   updated_at timestamptz not null default now()
 );
 
--- Optional: enable API access (usually already on for public schema)
--- alter table tracker_meta enable row level security;
+-- Safe to enable: the Render app uses SUPABASE_SERVICE_ROLE_KEY (server-only),
+-- which bypasses RLS. This blocks anon/authenticated keys from reading the table.
+alter table tracker_meta enable row level security;

@@ -704,7 +704,9 @@ function renderConnection(model) {
   connectButton.textContent = oauthConnected ? "Reconnect Fanvue" : "Connect Fanvue";
   disconnectButton.hidden = !oauthConnected;
   disconnectButton.disabled = !oauthConnected;
-  elements.connectionStatus.textContent = model.lastError || syncStatusLabel(model.lastStatus);
+  const connectionMessage = model.lastError || syncStatusLabel(model.lastStatus);
+  elements.connectionStatus.textContent = connectionMessage;
+  elements.connectionStatus.classList.toggle("connection-error", Boolean(model.lastError));
   elements.connectionDetails.innerHTML = detailRows([
     ["Fanvue", oauthConnected ? `Connected${model.fanvueOAuth.expiresAt ? ` until ${formatDate(model.fanvueOAuth.expiresAt)}` : ""}` : fanvueConfigLabel()],
     ["Profile", oauthConnected ? fanvueProfileLabel(model.fanvueOAuth.profile) : "Not connected"],
