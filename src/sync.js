@@ -1,6 +1,8 @@
 import { decryptSecret, encryptSecret } from "./crypto.js";
 import { fetchFanvueMetrics } from "./connector.js";
+import { fetchModelAudienceSummary, fetchModelPosts, fetchModelTrackingSummary, fetchModelVault } from "./fanvue-content.js";
 import { getFanvueAccessToken, sanitizeFanvueOAuth } from "./fanvue-oauth.js";
+import { periodBounds } from "./periods.js";
 import { createId, trimDb } from "./store.js";
 
 const DEFAULT_FANVUE_API_BASE_URL = "https://api.fanvue.com";
@@ -26,6 +28,18 @@ export function sanitizeModel(model) {
 export function sanitizeSnapshot(snapshot) {
   const { raw, ...safeSnapshot } = snapshot;
   return safeSnapshot;
+}
+
+export async function loadModelContent(store, modelId, kind) {
+  const db = await store.read();
+  const model = db.models.find((item) => item.id === modelId);
+  if (!model) throw notFoundError("Model was not found.");
+
+  const apiToken = await accessTokenForModel(store, model);
+  if (kind === "vault") return fetchModelVault(apiToken, model);
+  if (kind === "posts") return fetchModelPosts(apiToken, model);
+  if (kind === "tracking") return fetchModelTrackingSummary(apiToken, model, periodBounds("last14"));
+  throw new ValidationError("Unknown content type.");
 }
 
 export function sanitizeSyncLog(log) {
@@ -131,6 +145,12 @@ export function modelFromInput(input, existing = {}) {
     model.lastError = "";
   }
 
+  if (typeof input.chartColor === "string" && input.chartColor.trim()) {
+    model.chartColor = input.chartColor.trim();
+  } else if (!model.chartColor) {
+    model.chartColor = "";
+  }
+
   if (typeof input.apiToken === "string" && input.apiToken.trim()) {
     model.apiTokenEncrypted = encryptSecret(input.apiToken.trim());
   } else if (input.clearToken) {
@@ -152,6 +172,13 @@ export async function syncModel(store, modelId) {
     const apiToken = await accessTokenForModel(store, model);
     const { metrics, raw } = await fetchFanvueMetrics({ ...model, apiToken });
     const capturedAt = metrics.sourceTimestamp ? new Date(metrics.sourceTimestamp).toISOString() : new Date().toISOString();
+    const period = periodBounds("last14");
+    const [trackingResult, audienceResult, vaultResult, postsResult] = await Promise.allSettled([
+      fetchModelTrackingSummary(apiToken, model, period),
+      fetchModelAudienceSummary(apiToken, model, period),
+      fetchModelVault(apiToken, model),
+      fetchModelPosts(apiToken, model)
+    ]);
     const snapshot = {
       id: createId("snap"),
       modelId,
@@ -172,6 +199,22 @@ export async function syncModel(store, modelId) {
       tipsCents: metrics.tipsCents,
       clicks: metrics.clicks,
       currency: metrics.currency,
+      trackingSummary: trackingResult.status === "fulfilled" ? trackingResult.value : null,
+      audienceSummary: audienceResult.status === "fulfilled" ? audienceResult.value : null,
+      vaultSummary: vaultResult.status === "fulfilled" ? {
+        folderCount: vaultResult.value.folderCount,
+        mediaCount: vaultResult.value.mediaCount
+      } : null,
+      postsSummary: postsResult.status === "fulfilled" ? {
+        total: postsResult.value.total,
+        counts: postsResult.value.counts
+      } : null,
+      contentErrors: {
+        tracking: trackingResult.status === "rejected" ? trackingResult.reason.message : "",
+        audience: audienceResult.status === "rejected" ? audienceResult.reason.message : "",
+        vault: vaultResult.status === "rejected" ? vaultResult.reason.message : "",
+        posts: postsResult.status === "rejected" ? postsResult.reason.message : ""
+      },
       raw
     };
 

@@ -61,6 +61,21 @@ Required scopes (default in `.env.example`):
 
 7. Update Fanvue **Redirect URI** if it differs from what you entered earlier.
 
+## Fanvue permissions (Phase 1)
+
+For **read-only** vault, posts, and tracking, enable these scopes in the Fanvue developer app:
+
+- `read:insights`, `read:creator`, `read:media`, `read:post`, `read:fan`, `read:tracking_links`, `read:agency`, `read:self`
+- `openid`, `offline_access`, `offline`
+
+You do **not** need `write:media`, `write:post`, or `write:tracking_links` until VA upload features ship.
+
+Set **Redirect URI** to your live Render URL (not `127.0.0.1`):
+
+`https://YOUR-RENDER-APP.onrender.com/api/fanvue/callback`
+
+After changing scopes or redirect URI, click **Reconnect Fanvue** on each model, then **Sync all**.
+
 ## 4. Use from your phone
 
 1. Open the Render URL in Safari/Chrome.

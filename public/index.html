@@ -53,24 +53,47 @@
         <section class="view" id="overviewView">
           <section class="analysis-toolbar" aria-label="Dashboard controls">
             <label>
+              Timeline
+              <select id="periodPresetInput">
+                <option value="today">Today (since midnight)</option>
+                <option value="yesterday">Yesterday</option>
+                <option value="last7">Last 7 days</option>
+                <option value="last14" selected>Last 14 days</option>
+                <option value="last30">Last 30 days</option>
+                <option value="thisMonth">This month</option>
+                <option value="custom">Custom range</option>
+              </select>
+            </label>
+            <label class="custom-range-field" id="customFromField" hidden>
               From
               <input id="dateFromInput" type="date">
             </label>
-            <label>
+            <label class="custom-range-field" id="customToField" hidden>
               To
               <input id="dateToInput" type="date">
             </label>
             <label>
-              Metric
+              Totals metric
               <select id="metricModeInput">
                 <option value="ownerNet">Owner net</option>
                 <option value="gross">Gross revenue</option>
                 <option value="fanvueNet">Fanvue net</option>
               </select>
             </label>
+            <label>
+              Chart metric
+              <select id="comparisonMetricInput">
+                <option value="ownerNet">Owner net</option>
+                <option value="gross">Gross revenue</option>
+                <option value="fanvueNet">Fanvue net</option>
+                <option value="subscribers">New subscribers</option>
+                <option value="followers">New followers</option>
+                <option value="externalRevenue">External link revenue</option>
+              </select>
+            </label>
           </section>
 
-          <section class="overview-hero" aria-label="Combined revenue overview">
+          <section class="overview-hero overview-hero-grid" aria-label="Combined revenue overview">
             <article class="hero-metric">
               <span id="primaryMetricLabel">Combined owner net</span>
               <strong id="primaryMetricValue">$0</strong>
@@ -79,12 +102,22 @@
             <article>
               <span>Gross</span>
               <strong id="overviewGross">$0</strong>
-              <small>Before platform and agency cuts</small>
+              <small>Before platform fee</small>
+            </article>
+            <article>
+              <span>Fanvue net</span>
+              <strong id="overviewFanvueNet">$0</strong>
+              <small>After platform fee</small>
             </article>
             <article>
               <span>Agency due</span>
               <strong id="overviewAgencyDue">$0</strong>
-              <small>15th + 27th payout windows</small>
+              <small>30% chatting agency</small>
+            </article>
+            <article>
+              <span>External link rev.</span>
+              <strong id="overviewExternalRevenue">$0</strong>
+              <small>From tracking links</small>
             </article>
             <article>
               <span>Connected</span>
@@ -97,19 +130,47 @@
             <div class="panel-header">
               <div>
                 <h2>Model comparison</h2>
-                <p id="comparisonSubtitle">Daily performance by model</p>
+                <p id="comparisonSubtitle">Overlay chart by model color</p>
               </div>
             </div>
             <div class="chart-wrap comparison-chart" id="comparisonChart"></div>
             <div class="chart-legend" id="comparisonLegend"></div>
           </section>
 
+          <section class="panel table-panel">
+            <div class="panel-header compact">
+              <div>
+                <h2>All models</h2>
+                <p id="modelTableSubtitle">Period performance and traffic split</p>
+              </div>
+            </div>
+            <div class="table-scroll wide-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>Gross</th>
+                    <th>Net</th>
+                    <th>Owner net</th>
+                    <th>New subs</th>
+                    <th>New followers</th>
+                    <th>Internal</th>
+                    <th>External</th>
+                    <th>Ext. revenue</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="modelPerformanceRows"></tbody>
+              </table>
+            </div>
+          </section>
+
           <section class="overview-grid">
             <section class="panel">
               <div class="panel-header compact">
                 <div>
-                  <h2>Model performance</h2>
-                  <p>Selected period totals</p>
+                  <h2>Traffic detail</h2>
+                  <p>Internal vs external tracking links</p>
                 </div>
               </div>
               <div class="table-scroll">
@@ -117,14 +178,14 @@
                   <thead>
                     <tr>
                       <th>Model</th>
-                      <th>Gross</th>
-                      <th>Owner net</th>
-                      <th>Agency</th>
-                      <th>Top source</th>
-                      <th>Status</th>
+                      <th>Channel</th>
+                      <th>Clicks</th>
+                      <th>Subs</th>
+                      <th>Followers</th>
+                      <th>Net revenue</th>
                     </tr>
                   </thead>
-                  <tbody id="modelPerformanceRows"></tbody>
+                  <tbody id="trafficDetailRows"></tbody>
                 </table>
               </div>
             </section>
@@ -154,6 +215,13 @@
         </section>
 
         <section class="view" id="modelView" hidden>
+          <div class="model-tabs" role="tablist" aria-label="Model sections">
+            <button class="model-tab active" type="button" data-model-tab="overview">Overview</button>
+            <button class="model-tab" type="button" data-model-tab="vault">Vault</button>
+            <button class="model-tab" type="button" data-model-tab="posts">Posts</button>
+          </div>
+
+          <section class="model-tab-panel active" id="modelTabOverview">
           <section class="model-summary" aria-label="Selected model overview">
             <article class="hero-metric">
               <span id="modelPrimaryLabel">Owner net</span>
@@ -260,6 +328,46 @@
               <button class="danger-button" id="deleteModelButton" type="button">Delete</button>
             </div>
           </section>
+          </section>
+
+          <section class="model-tab-panel" id="modelTabVault" hidden>
+            <section class="panel">
+              <div class="panel-header compact">
+                <div>
+                  <h2>Vault</h2>
+                  <p id="vaultSubtitle">Folders and media for this model</p>
+                </div>
+                <button class="ghost-button" id="refreshVaultButton" type="button">Refresh vault</button>
+              </div>
+              <div id="vaultContent" class="content-grid"></div>
+            </section>
+          </section>
+
+          <section class="model-tab-panel" id="modelTabPosts" hidden>
+            <section class="panel table-panel">
+              <div class="panel-header compact">
+                <div>
+                  <h2>Posts</h2>
+                  <p id="postsSubtitle">Published, scheduled, and draft posts</p>
+                </div>
+                <button class="ghost-button" id="refreshPostsButton" type="button">Refresh posts</button>
+              </div>
+              <div class="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Title</th>
+                      <th>Status</th>
+                      <th>Media</th>
+                      <th>Price</th>
+                      <th>Date</th>
+                    </tr>
+                  </thead>
+                  <tbody id="postsRows"></tbody>
+                </table>
+              </div>
+            </section>
+          </section>
         </section>
       </main>
     </div>
@@ -283,6 +391,10 @@
           <label>
             Sync interval
             <input id="syncIntervalInput" name="syncIntervalMinutes" type="number" min="5" step="5" value="60" required>
+          </label>
+          <label>
+            Chart color
+            <input id="chartColorInput" name="chartColor" type="color" value="#49f263">
           </label>
           <label class="toggle-label">
             <input id="enabledInput" name="enabled" type="checkbox" checked>

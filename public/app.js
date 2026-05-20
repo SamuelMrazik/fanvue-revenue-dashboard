@@ -12,9 +12,16 @@ const state = {
   fanvueStatus: { configured: false },
   selectedModelId: null,
   editingModelId: null,
+  periodPreset: "last14",
   dateFrom: "",
   dateTo: "",
-  metricMode: "ownerNet"
+  metricMode: "ownerNet",
+  comparisonMetric: "ownerNet",
+  modelTab: "overview",
+  contentCache: {
+    vault: new Map(),
+    posts: new Map()
+  }
 };
 
 const elements = {
@@ -25,9 +32,21 @@ const elements = {
   pageTitle: document.querySelector("#pageTitle"),
   modelList: document.querySelector("#modelList"),
   syncSummary: document.querySelector("#syncSummary"),
+  periodPresetInput: document.querySelector("#periodPresetInput"),
+  customFromField: document.querySelector("#customFromField"),
+  customToField: document.querySelector("#customToField"),
   dateFromInput: document.querySelector("#dateFromInput"),
   dateToInput: document.querySelector("#dateToInput"),
   metricModeInput: document.querySelector("#metricModeInput"),
+  comparisonMetricInput: document.querySelector("#comparisonMetricInput"),
+  overviewFanvueNet: document.querySelector("#overviewFanvueNet"),
+  overviewExternalRevenue: document.querySelector("#overviewExternalRevenue"),
+  modelTableSubtitle: document.querySelector("#modelTableSubtitle"),
+  trafficDetailRows: document.querySelector("#trafficDetailRows"),
+  vaultSubtitle: document.querySelector("#vaultSubtitle"),
+  vaultContent: document.querySelector("#vaultContent"),
+  postsSubtitle: document.querySelector("#postsSubtitle"),
+  postsRows: document.querySelector("#postsRows"),
   primaryMetricLabel: document.querySelector("#primaryMetricLabel"),
   primaryMetricValue: document.querySelector("#primaryMetricValue"),
   primaryMetricSubtext: document.querySelector("#primaryMetricSubtext"),
@@ -80,10 +99,17 @@ elements.overviewButton.addEventListener("click", () => {
   state.selectedModelId = null;
   render();
 });
+elements.periodPresetInput.addEventListener("change", updatePeriodControls);
 elements.dateFromInput.addEventListener("change", updatePeriodControls);
 elements.dateToInput.addEventListener("change", updatePeriodControls);
 elements.metricModeInput.addEventListener("change", updatePeriodControls);
+elements.comparisonMetricInput.addEventListener("change", updatePeriodControls);
 elements.modelForm.addEventListener("submit", saveModel);
+document.querySelectorAll("[data-model-tab]").forEach((button) => {
+  button.addEventListener("click", () => switchModelTab(button.dataset.modelTab));
+});
+document.querySelector("#refreshVaultButton").addEventListener("click", () => loadVaultContent(true));
+document.querySelector("#refreshPostsButton").addEventListener("click", () => loadPostsContent(true));
 
 handleOAuthReturnParams();
 await loadSummary();
@@ -126,15 +152,20 @@ function render() {
   elements.modelView.hidden = !isModelView;
   elements.overviewButton.classList.toggle("active", !isModelView);
   document.querySelector("#syncAllButton").disabled = !state.models.some(canSyncModel);
+  elements.periodPresetInput.value = state.periodPreset;
+  elements.customFromField.hidden = state.periodPreset !== "custom";
+  elements.customToField.hidden = state.periodPreset !== "custom";
   elements.dateFromInput.value = state.dateFrom;
   elements.dateToInput.value = state.dateTo;
   elements.metricModeInput.value = state.metricMode;
+  elements.comparisonMetricInput.value = state.comparisonMetric;
 
   renderModels();
   renderOverview();
   renderModelView(selected);
   renderLogs(selected);
   renderConnection(selected);
+  renderModelTabPanels(selected);
 }
 
 function renderModels() {
@@ -145,7 +176,7 @@ function renderModels() {
 
   elements.modelList.innerHTML = state.models.map((model, index) => {
     const active = model.id === state.selectedModelId ? "active" : "";
-    const color = MODEL_COLORS[index % MODEL_COLORS.length];
+    const color = modelColor(model, index);
     const latest = latestSnapshotForModel(model.id);
     const ownerNet = latest ? profitForAggregate(latest).ownerNetCents : 0;
     return `
@@ -167,10 +198,12 @@ function renderModels() {
 function renderOverview() {
   const periodRows = state.models.map((model, index) => {
     const totals = periodTotalsForModel(model);
+    const insights = modelInsights(model);
     return {
       model,
-      color: MODEL_COLORS[index % MODEL_COLORS.length],
+      color: modelColor(model, index),
       totals,
+      insights,
       topSource: topSourceForModel(model)
     };
   });
@@ -182,17 +215,22 @@ function renderOverview() {
   const agencyDueCents = sum(periodRows.map((row) => (
     payoutTotalForModel(row.model, payoutPeriods.fifteenth) + payoutTotalForModel(row.model, payoutPeriods.twentySeventh)
   )));
+  const externalRevenueCents = sum(periodRows.map((row) => row.insights.externalRevenueCents));
   const connected = state.models.filter(canSyncModel).length;
 
   elements.primaryMetricLabel.textContent = `Combined ${metricLabel(state.metricMode).toLowerCase()}`;
   elements.primaryMetricValue.textContent = formatMoney(selectedMetricCents);
   elements.primaryMetricSubtext.textContent = periodLabel();
+  elements.modelTableSubtitle.textContent = `${periodLabel()} · revenue since period start`;
   elements.overviewGross.textContent = formatMoney(grossCents);
+  elements.overviewFanvueNet.textContent = formatMoney(fanvueNetCents);
   elements.overviewAgencyDue.textContent = formatMoney(agencyDueCents);
+  elements.overviewExternalRevenue.textContent = formatMoney(externalRevenueCents);
   elements.overviewHealth.textContent = `${connected}/${state.models.length}`;
 
   renderComparisonChart(periodRows);
   renderPerformanceTable(periodRows);
+  renderTrafficDetail(periodRows);
   renderAgencyPayouts(periodRows);
 }
 
@@ -202,15 +240,15 @@ function renderComparisonChart(rows) {
     .map((row) => ({
       label: row.model.displayName,
       color: row.color,
-      points: pointsForModel(row.model, dates).map((point) => ({
-        date: point.date,
-        value: metricValue(point)
-      }))
+      points: comparisonPointsForModel(row.model, row.insights, dates)
     }))
     .filter((serie) => serie.points.some((point) => point.value > 0));
 
-  elements.comparisonSubtitle.textContent = `${metricLabel(state.metricMode)} · ${periodLabel()}`;
-  elements.comparisonChart.innerHTML = lineChartSvg(series, dates, { empty: "No daily earnings in this period yet." });
+  elements.comparisonSubtitle.textContent = `${comparisonMetricLabel(state.comparisonMetric)} · ${periodLabel()}`;
+  elements.comparisonChart.innerHTML = lineChartSvg(series, dates, {
+    empty: "Sync models to populate comparison data.",
+    valueFormatter: comparisonMetricFormatter(state.comparisonMetric)
+  });
   elements.comparisonLegend.innerHTML = series.map((serie) => `
     <span><i style="--model-color: ${serie.color}"></i>${escapeHtml(serie.label)}</span>
   `).join("") || `<span>No synced model data</span>`;
@@ -226,12 +264,16 @@ function renderPerformanceTable(rows) {
         </button>
       </td>
       <td>${formatMoney(row.totals.grossCents)}</td>
+      <td>${formatMoney(row.totals.fanvueNetCents)}</td>
       <td>${formatMoney(row.totals.ownerNetCents)}</td>
-      <td>${formatMoney(row.totals.agencyFeeCents)}</td>
-      <td>${escapeHtml(row.topSource.label)}${row.topSource.value ? ` · ${formatPercent(row.topSource.share)}` : ""}</td>
+      <td>${formatCount(row.insights.newSubscribers)}</td>
+      <td>${formatCount(row.insights.newFollowers)}</td>
+      <td>${formatTrafficCell(row.insights.internal)}</td>
+      <td>${formatTrafficCell(row.insights.external)}</td>
+      <td>${formatMoney(row.insights.externalRevenueCents)}</td>
       <td><span class="pill ${statusClass(row.model.lastStatus)}">${escapeHtml(statusLabel(row.model.lastStatus))}</span></td>
     </tr>
-  `).join("") || `<tr><td colspan="6">No models in this period.</td></tr>`;
+  `).join("") || `<tr><td colspan="10">No models in this period.</td></tr>`;
 
   elements.modelPerformanceRows.querySelectorAll("[data-row-model-id]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -239,6 +281,28 @@ function renderPerformanceTable(rows) {
       render();
     });
   });
+}
+
+function renderTrafficDetail(rows) {
+  const detailRows = [];
+  for (const row of rows) {
+    for (const channel of ["internal", "external"]) {
+      const stats = row.insights[channel];
+      if (!stats.linkCount && !stats.clicks && !stats.subscribers && !stats.followers && !stats.netRevenueCents) continue;
+      detailRows.push({ model: row.model, color: row.color, channel, stats });
+    }
+  }
+
+  elements.trafficDetailRows.innerHTML = detailRows.map((row) => `
+    <tr>
+      <td><i style="--model-color: ${row.color}"></i>${escapeHtml(row.model.displayName)}</td>
+      <td>${escapeHtml(row.channel)}</td>
+      <td>${formatCount(row.stats.clicks)}</td>
+      <td>${formatCount(row.stats.subscribers)}</td>
+      <td>${formatCount(row.stats.followers)}</td>
+      <td>${formatMoney(row.stats.netRevenueCents)}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="6">Sync models to load tracking link data.</td></tr>`;
 }
 
 function renderAgencyPayouts(rows) {
@@ -284,7 +348,7 @@ function renderModelView(model) {
 
   const dates = selectedDateRange();
   const modelIndex = state.models.findIndex((item) => item.id === model.id);
-  const color = MODEL_COLORS[Math.max(modelIndex, 0) % MODEL_COLORS.length];
+  const color = modelColor(model, Math.max(modelIndex, 0));
   const points = pointsForModel(model, dates).map((point) => ({ date: point.date, value: metricValue(point) }));
   elements.modelChart.innerHTML = lineChartSvg([{ label: model.displayName, color, points }], dates, { empty: "No daily earnings in this period yet." });
 
@@ -401,6 +465,7 @@ function lineChartSvg(series, dates, options = {}) {
   const padding = { top: 32, right: 24, bottom: 42, left: 58 };
   const values = activeSeries.flatMap((serie) => serie.points.map((point) => point.value));
   const max = Math.max(...values, 1);
+  const formatValue = options.valueFormatter || formatMoney;
   const xForIndex = (index) => padding.left + (index / Math.max(dates.length - 1, 1)) * (width - padding.left - padding.right);
   const yForValue = (value) => height - padding.bottom - (value / max) * (height - padding.top - padding.bottom);
   const xByDate = new Map(dates.map((date, index) => [date, xForIndex(index)]));
@@ -412,7 +477,7 @@ function lineChartSvg(series, dates, options = {}) {
   return `
     <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Revenue timeline">
       <path class="chart-grid" d="M ${padding.left} ${yForValue(max)} H ${width - padding.right} M ${padding.left} ${yForValue(max / 2)} H ${width - padding.right} M ${padding.left} ${yForValue(0)} H ${width - padding.right}"></path>
-      <text x="${padding.left}" y="20" fill="currentColor" font-size="13">${formatMoney(max)}</text>
+      <text x="${padding.left}" y="20" fill="currentColor" font-size="13">${formatValue(max)}</text>
       <text x="${padding.left}" y="${height - 14}" fill="currentColor" font-size="13">${formatShortDate(dates[0])}</text>
       <text x="${width - padding.right - 96}" y="${height - 14}" fill="currentColor" font-size="13">${formatShortDate(dates.at(-1))}</text>
       ${lines}
@@ -421,22 +486,30 @@ function lineChartSvg(series, dates, options = {}) {
 }
 
 function initializePeriod() {
-  if (state.dateFrom && state.dateTo) return;
-
-  const dates = state.models.flatMap((model) => dailyPointsForModel(model).map((point) => point.date)).sort();
-  const today = dateKey(new Date());
-  state.dateFrom = dates[0] || monthStart(today);
-  state.dateTo = dates.at(-1) || today;
+  applyPeriodPreset(state.periodPreset || "last14", { preserveCustom: Boolean(state.dateFrom && state.dateTo) });
 }
 
 function updatePeriodControls() {
-  state.dateFrom = elements.dateFromInput.value || state.dateFrom;
-  state.dateTo = elements.dateToInput.value || state.dateTo;
-  if (state.dateFrom > state.dateTo) {
-    [state.dateFrom, state.dateTo] = [state.dateTo, state.dateFrom];
-  }
+  state.periodPreset = elements.periodPresetInput.value;
   state.metricMode = elements.metricModeInput.value;
+  state.comparisonMetric = elements.comparisonMetricInput.value;
+  applyPeriodPreset(state.periodPreset, { preserveCustom: true });
   render();
+}
+
+function applyPeriodPreset(preset, options = {}) {
+  const bounds = periodBoundsFromPreset(preset, {
+    startDate: options.preserveCustom ? elements.dateFromInput.value : "",
+    endDate: options.preserveCustom ? elements.dateToInput.value : ""
+  });
+  state.periodPreset = bounds.preset;
+  state.dateFrom = bounds.startDate;
+  state.dateTo = bounds.endDate;
+  elements.periodPresetInput.value = state.periodPreset;
+  elements.customFromField.hidden = state.periodPreset !== "custom";
+  elements.customToField.hidden = state.periodPreset !== "custom";
+  elements.dateFromInput.value = state.dateFrom;
+  elements.dateToInput.value = state.dateTo;
 }
 
 function selectedDateRange() {
@@ -693,6 +766,7 @@ function openModelDialog(model = null) {
   elements.modelSubmitButton.textContent = model ? "Save model" : "Create model";
   elements.modelForm.displayName.value = model?.displayName ?? "";
   elements.modelForm.syncIntervalMinutes.value = model?.syncIntervalMinutes ?? 60;
+  elements.modelForm.chartColor.value = model?.chartColor || MODEL_COLORS[0];
   elements.modelForm.enabled.checked = model?.enabled ?? true;
   elements.modelDialog.showModal();
 }
@@ -715,6 +789,7 @@ async function saveModel(event) {
     apiBaseUrl: DEFAULT_FANVUE_API_BASE_URL,
     endpointPath: DEFAULT_FANVUE_ENDPOINT,
     syncIntervalMinutes: Number(elements.modelForm.syncIntervalMinutes.value),
+    chartColor: elements.modelForm.chartColor.value,
     enabled: elements.modelForm.enabled.checked
   };
 
@@ -836,8 +911,222 @@ function monthStart(value) {
 }
 
 function periodLabel() {
+  const labels = {
+    today: "Today (since midnight)",
+    yesterday: "Yesterday",
+    last7: "Last 7 days",
+    last14: "Last 14 days",
+    last30: "Last 30 days",
+    thisMonth: "This month"
+  };
+  if (labels[state.periodPreset]) return labels[state.periodPreset];
   if (!state.dateFrom || !state.dateTo) return "Selected period";
   return `${formatShortDate(state.dateFrom)} to ${formatShortDate(state.dateTo)}`;
+}
+
+function periodBoundsFromPreset(preset, custom = {}) {
+  const today = startOfUtcDay(new Date());
+  const endDate = dateKey(today);
+
+  if (preset === "today") return { preset, startDate: endDate, endDate };
+  if (preset === "yesterday") {
+    const key = dateKey(shiftUtcDays(today, -1));
+    return { preset, startDate: key, endDate: key };
+  }
+  if (preset === "last7") return { preset, startDate: dateKey(shiftUtcDays(today, -6)), endDate };
+  if (preset === "last14") return { preset, startDate: dateKey(shiftUtcDays(today, -13)), endDate };
+  if (preset === "last30") return { preset, startDate: dateKey(shiftUtcDays(today, -29)), endDate };
+  if (preset === "thisMonth") {
+    return { preset, startDate: dateKey(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1))), endDate };
+  }
+  return {
+    preset: "custom",
+    startDate: custom.startDate || endDate,
+    endDate: custom.endDate || endDate
+  };
+}
+
+function modelColor(model, index) {
+  return model?.chartColor || MODEL_COLORS[index % MODEL_COLORS.length];
+}
+
+function modelInsights(model) {
+  const snapshot = latestSnapshotForModel(model.id);
+  const tracking = snapshot?.trackingSummary;
+  const audience = snapshot?.audienceSummary;
+  const zero = { linkCount: 0, clicks: 0, subscribers: 0, followers: 0, grossRevenueCents: 0, netRevenueCents: 0 };
+  return {
+    newSubscribers: audience?.newSubscribers ?? 0,
+    newFollowers: audience?.newFollowers ?? 0,
+    internal: tracking?.internal || zero,
+    external: tracking?.external || zero,
+    externalRevenueCents: tracking?.external?.netRevenueCents ?? 0,
+    audienceDaily: Array.isArray(audience?.daily) ? audience.daily : []
+  };
+}
+
+function comparisonPointsForModel(model, insights, dates) {
+  if (["subscribers", "followers"].includes(state.comparisonMetric)) {
+    const dailyMap = new Map(insights.audienceDaily.map((row) => [row.date, row]));
+    return dates.map((date) => ({
+      date,
+      value: state.comparisonMetric === "subscribers"
+        ? (dailyMap.get(date)?.newSubscribers || 0)
+        : (dailyMap.get(date)?.newFollowers || 0)
+    }));
+  }
+
+  if (state.comparisonMetric === "externalRevenue") {
+    const perDay = Math.round((insights.externalRevenueCents || 0) / Math.max(dates.length, 1));
+    return dates.map((date) => ({ date, value: perDay }));
+  }
+
+  const revenueMetric = state.comparisonMetric === "gross"
+    ? "gross"
+    : state.comparisonMetric === "fanvueNet"
+      ? "fanvueNet"
+      : "ownerNet";
+  const previousMetric = state.metricMode;
+  state.metricMode = revenueMetric;
+  const points = pointsForModel(model, dates).map((point) => ({
+    date: point.date,
+    value: metricValue(point)
+  }));
+  state.metricMode = previousMetric;
+  return points;
+}
+
+function comparisonMetricLabel(metric) {
+  return {
+    gross: "Gross revenue",
+    fanvueNet: "Fanvue net",
+    ownerNet: "Owner net",
+    subscribers: "New subscribers",
+    followers: "New followers",
+    externalRevenue: "External link revenue"
+  }[metric] || "Owner net";
+}
+
+function comparisonMetricFormatter(metric) {
+  if (["subscribers", "followers"].includes(metric)) return formatCount;
+  if (metric === "externalRevenue") return formatMoney;
+  return formatMoney;
+}
+
+function formatTrafficCell(stats) {
+  return `${formatCount(stats.subscribers)} subs · ${formatCount(stats.followers)} foll`;
+}
+
+function formatCount(value = 0) {
+  return new Intl.NumberFormat("en-US").format(Number(value) || 0);
+}
+
+function switchModelTab(tab) {
+  state.modelTab = tab;
+  renderModelTabPanels(selectedModel());
+  if (tab === "vault") loadVaultContent(false);
+  if (tab === "posts") loadPostsContent(false);
+}
+
+function renderModelTabPanels(model) {
+  document.querySelectorAll("[data-model-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.modelTab === state.modelTab);
+  });
+  document.querySelector("#modelTabOverview").hidden = state.modelTab !== "overview";
+  document.querySelector("#modelTabVault").hidden = state.modelTab !== "vault";
+  document.querySelector("#modelTabPosts").hidden = state.modelTab !== "posts";
+  if (!model) return;
+  if (state.modelTab === "vault") renderVaultPanel(model, state.contentCache.vault.get(model.id));
+  if (state.modelTab === "posts") renderPostsPanel(model, state.contentCache.posts.get(model.id));
+}
+
+async function loadVaultContent(force) {
+  const model = selectedModel();
+  if (!model) return;
+  if (!force && state.contentCache.vault.has(model.id)) {
+    renderVaultPanel(model, state.contentCache.vault.get(model.id));
+    return;
+  }
+  elements.vaultContent.innerHTML = `<div class="chart-empty compact-empty">Loading vault...</div>`;
+  try {
+    const payload = await api(`/api/models/${model.id}/content/vault`);
+    state.contentCache.vault.set(model.id, payload);
+    renderVaultPanel(model, payload);
+  } catch (error) {
+    elements.vaultContent.innerHTML = `<div class="chart-empty compact-empty">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function loadPostsContent(force) {
+  const model = selectedModel();
+  if (!model) return;
+  if (!force && state.contentCache.posts.has(model.id)) {
+    renderPostsPanel(model, state.contentCache.posts.get(model.id));
+    return;
+  }
+  elements.postsSubtitle.textContent = "Loading posts...";
+  try {
+    const payload = await api(`/api/models/${model.id}/content/posts`);
+    state.contentCache.posts.set(model.id, payload);
+    renderPostsPanel(model, payload);
+  } catch (error) {
+    elements.postsSubtitle.textContent = error.message;
+    elements.postsRows.innerHTML = `<tr><td colspan="5">${escapeHtml(error.message)}</td></tr>`;
+  }
+}
+
+function renderVaultPanel(model, payload) {
+  if (!payload) {
+    elements.vaultSubtitle.textContent = "Vault not loaded yet";
+    elements.vaultContent.innerHTML = `<div class="chart-empty compact-empty">Open this tab to load vault folders.</div>`;
+    return;
+  }
+  elements.vaultSubtitle.textContent = `${payload.folderCount} folders · ${payload.mediaCount} media items`;
+  elements.vaultContent.innerHTML = payload.folders.map((folder) => `
+    <article class="content-card">
+      <header>
+        <strong>${escapeHtml(folder.name)}</strong>
+        <span>${folder.mediaCount} items</span>
+      </header>
+      <div class="media-grid">
+        ${folder.media.slice(0, 24).map((item) => `
+          <div class="media-tile">
+            ${item.thumbnailUrl ? `<img src="${escapeHtml(item.thumbnailUrl)}" alt="">` : `<span>${escapeHtml(item.mediaType)}</span>`}
+            <small>${escapeHtml(item.name)}</small>
+          </div>
+        `).join("") || `<span class="empty-note">No media in this folder.</span>`}
+      </div>
+    </article>
+  `).join("") || `<div class="chart-empty compact-empty">Vault is empty.</div>`;
+}
+
+function renderPostsPanel(model, payload) {
+  if (!payload) {
+    elements.postsSubtitle.textContent = "Posts not loaded yet";
+    elements.postsRows.innerHTML = `<tr><td colspan="5">Open this tab to load posts.</td></tr>`;
+    return;
+  }
+  const counts = payload.counts || {};
+  elements.postsSubtitle.textContent = `${payload.total} posts · ${counts.published || 0} published · ${counts.scheduled || 0} scheduled · ${counts.draft || 0} draft`;
+  elements.postsRows.innerHTML = payload.posts.map((post) => `
+    <tr>
+      <td>${escapeHtml(post.title)}</td>
+      <td><span class="pill">${escapeHtml(post.status)}</span></td>
+      <td>${formatCount(post.mediaCount)}</td>
+      <td>${post.priceCents ? formatMoney(post.priceCents) : "—"}</td>
+      <td>${formatDate(post.publishedAt || post.createdAt)}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="5">No posts returned by Fanvue API.</td></tr>`;
+}
+
+function startOfUtcDay(date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function shiftUtcDays(date, days) {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
 }
 
 function formatMoney(cents = 0) {

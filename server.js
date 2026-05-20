@@ -13,7 +13,16 @@ import {
   getFanvueOAuthStatus
 } from "./src/fanvue-oauth.js";
 import { createStore, storageMode } from "./src/create-store.js";
-import { buildSummary, modelFromInput, modelHasConnection, sanitizeModel, syncDueModels, syncModel, testModelConnection } from "./src/sync.js";
+import {
+  buildSummary,
+  loadModelContent,
+  modelFromInput,
+  modelHasConnection,
+  sanitizeModel,
+  syncDueModels,
+  syncModel,
+  testModelConnection
+} from "./src/sync.js";
 
 loadDotEnv();
 assertSecretConfiguration();
@@ -189,6 +198,13 @@ async function handleApi(request, response, url) {
   if (testRoute && request.method === "POST") {
     const result = await testModelConnection(store, testRoute[1]);
     sendJson(response, 200, { ok: true, result });
+    return;
+  }
+
+  const contentRoute = url.pathname.match(/^\/api\/models\/([^/]+)\/content\/(vault|posts|tracking)$/);
+  if (contentRoute && request.method === "GET") {
+    const payload = await loadModelContent(store, contentRoute[1], contentRoute[2]);
+    sendJson(response, 200, payload);
     return;
   }
 

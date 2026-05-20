@@ -264,7 +264,19 @@ function fanvueMetricsEndpoint() {
 }
 
 function fanvueScopes() {
-  return process.env.FANVUE_SCOPES || "openid offline_access offline read:self read:insights";
+  return process.env.FANVUE_SCOPES || [
+    "openid",
+    "offline_access",
+    "offline",
+    "read:self",
+    "read:insights",
+    "read:creator",
+    "read:media",
+    "read:post",
+    "read:fan",
+    "read:tracking_links",
+    "read:agency"
+  ].join(" ");
 }
 
 export function fanvueApiVersion() {

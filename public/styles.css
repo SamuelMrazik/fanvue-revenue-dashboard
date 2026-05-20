@@ -306,7 +306,7 @@ h2 {
 
 .analysis-toolbar {
   display: grid;
-  grid-template-columns: repeat(3, minmax(170px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
   margin-bottom: 14px;
   padding: 14px;
@@ -314,6 +314,10 @@ h2 {
   border-radius: var(--radius);
   background: var(--surface);
   box-shadow: var(--shadow);
+}
+
+.overview-hero-grid {
+  grid-template-columns: minmax(220px, 1.2fr) repeat(5, minmax(130px, 1fr));
 }
 
 .analysis-toolbar label,
@@ -833,4 +837,106 @@ th {
   table {
     min-width: 620px;
   }
+
+  .overview-hero-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.model-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.model-tab {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 14px;
+  color: var(--muted);
+  background: var(--surface);
+}
+
+.model-tab.active {
+  color: var(--ink);
+  border-color: var(--primary-border);
+  background: var(--primary-soft);
+}
+
+.model-tab-panel {
+  display: block;
+}
+
+.content-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.content-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: var(--surface-soft);
+}
+
+.content-card header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 8px;
+}
+
+.media-tile {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #15171a;
+  min-height: 92px;
+}
+
+.media-tile img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.media-tile small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.wide-table table {
+  min-width: 1080px;
+}
+
+.table-model-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+}
+
+.table-model-button i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--model-color, var(--primary));
 }
