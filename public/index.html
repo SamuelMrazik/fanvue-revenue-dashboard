@@ -30,8 +30,8 @@
 
         <div class="sidebar-footer">
           <button class="overview-item" id="contentDriveButton" type="button">
-            <strong>Content Drive</strong>
-            <span id="contentDriveNavCount">0 open requests</span>
+            <strong>Content Requests</strong>
+            <span id="contentDriveNavCount">0</span>
           </button>
           <button class="overview-item settings-item" id="settingsButton" type="button">
             <strong>Settings</strong>
@@ -70,8 +70,9 @@
                 <option value="today">Today (since midnight)</option>
                 <option value="yesterday">Yesterday</option>
                 <option value="last7">Last 7 days</option>
-                <option value="last14" selected>Last 14 days</option>
+                <option value="last14">Last 14 days</option>
                 <option value="last30">Last 30 days</option>
+                <option value="allTime" selected>All time</option>
                 <option value="thisMonth">This month</option>
                 <option value="custom">Custom range</option>
               </select>
@@ -87,28 +88,28 @@
             <label>
               Totals metric
               <select id="metricModeInput">
-                <option value="ownerNet">Owner net</option>
                 <option value="gross">Gross revenue</option>
                 <option value="fanvueNet">Fanvue net</option>
+                <option value="ownerNet">Owner net</option>
               </select>
             </label>
           </section>
 
           <section class="overview-hero overview-hero-grid overview-hero-compact" aria-label="Combined revenue overview">
             <article class="hero-metric">
-              <span>Owner net</span>
+              <span>Gross</span>
               <strong id="primaryMetricValue">$0</strong>
               <small id="primaryMetricSubtext">Selected period</small>
             </article>
             <article>
-              <span>Gross</span>
+              <span>Fanvue net</span>
               <strong id="overviewGross">$0</strong>
-              <small>Before platform fee</small>
+              <small>After platform fee</small>
             </article>
             <article>
-              <span>Agency due</span>
+              <span>Owner net</span>
               <strong id="overviewAgencyDue">$0</strong>
-              <small>30% chatting agency</small>
+              <small>After platform and agency fees</small>
             </article>
           </section>
 
@@ -124,8 +125,8 @@
             <button class="va-requests-button" id="vaRequestsStripButton" type="button">
               <span class="va-requests-count" id="openVaRequestsCount">0</span>
               <span class="va-requests-copy">
-                <strong>Open VA requests</strong>
-                <small>Tap to open Content Drive</small>
+                <strong>Open requests</strong>
+                <small>Tap to open Content Requests</small>
               </span>
             </button>
           </section>
@@ -165,8 +166,7 @@
                 <thead>
                   <tr>
                     <th>Model</th>
-                    <th>Owner net</th>
-                    <th>New subs</th>
+                    <th>Gross</th>
                     <th>Tracking traffic</th>
                     <th>Tracking revenue</th>
                     <th>Requests</th>
@@ -200,7 +200,7 @@
                     <th>Link</th>
                     <th>Traffic</th>
                     <th>Subs revenue</th>
-                    <th>Owner net share</th>
+                    <th>Gross share</th>
                   </tr>
                 </thead>
                 <tbody id="trafficProfitRows"></tbody>
@@ -243,7 +243,7 @@
           <section class="panel">
             <div class="panel-header compact">
               <div>
-                <h2>VA requests</h2>
+                <h2>Content Requests</h2>
                 <p id="contentDriveSubtitle">Open queue from your VAs</p>
               </div>
               <button class="solid-button" id="addVaRequestButton" type="button">Add request</button>
@@ -258,7 +258,7 @@
           <div class="model-tabs" role="tablist" aria-label="Model sections">
             <button class="model-tab active" type="button" data-model-tab="overview">Overview</button>
             <button class="model-tab" type="button" data-model-tab="traffic">Traffic &amp; links</button>
-            <button class="model-tab" type="button" data-model-tab="content">Content Generations</button>
+            <button class="model-tab" type="button" data-model-tab="content">Content Requests</button>
             <button class="model-tab" type="button" data-model-tab="vault">Vault</button>
             <button class="model-tab" type="button" data-model-tab="posts">Posts</button>
             <button class="model-tab" type="button" data-model-tab="connection">Connection</button>
@@ -267,19 +267,19 @@
           <section class="model-tab-panel active" id="modelTabOverview">
           <section class="model-summary" aria-label="Selected model overview">
             <article class="hero-metric">
-              <span id="modelPrimaryLabel">Owner net</span>
+              <span id="modelPrimaryLabel">Gross</span>
               <strong id="modelOwnerNet">$0</strong>
               <small id="modelPeriodLabel">Selected period</small>
             </article>
             <article>
-              <span>Gross</span>
+              <span>Fanvue net</span>
               <strong id="modelGross">$0</strong>
-              <small>Before platform and agency cuts</small>
+              <small>After platform fee</small>
             </article>
             <article>
-              <span>Agency due</span>
+              <span>Owner net</span>
               <strong id="modelAgencyDue">$0</strong>
-              <small>Current payout period</small>
+              <small>After platform and agency fees</small>
             </article>
             <article>
               <span>Top source</span>
@@ -322,8 +322,8 @@
                     <tr>
                       <th>Date</th>
                       <th>Gross</th>
+                      <th>Fanvue net</th>
                       <th>Owner net</th>
-                      <th>Agency</th>
                     </tr>
                   </thead>
                   <tbody id="dailyRows"></tbody>
@@ -362,8 +362,8 @@
             <section class="panel">
               <div class="panel-header compact">
                 <div>
-                  <h2>Content Generations</h2>
-                  <p id="modelContentSubtitle">VA requests and Google Drive links</p>
+                  <h2>Content Requests</h2>
+                  <p id="modelContentSubtitle">Requests and Google Drive links</p>
                 </div>
                 <button class="ghost-button" id="addModelVaRequestButton" type="button">Add request</button>
               </div>

@@ -53,7 +53,7 @@ export async function fetchModelVault(accessToken, model) {
       name: String(folderName),
       mediaCount: media.length,
       loadError: media.length ? "" : (folder.mediaCount > 0 ? "Fanvue returned folder metadata but media list was empty. Try Refresh vault." : ""),
-      media: media.map(normalizeVaultMedia).slice(0, 120)
+      media: media.map(normalizeVaultMedia).slice(0, 500)
     });
   }
 
@@ -203,12 +203,13 @@ export async function fetchModelAudienceSummary(accessToken, model, period) {
   if (!rows.length && lastError) throw lastError;
 
   const filtered = rows.filter((row) => dateInRange(row.date, period.startDate, period.endDate));
+  const daily = aggregateAudienceByDate(filtered);
   return {
     period,
-    newSubscribers: sum(filtered.map((row) => row.newSubscribers)),
-    newFollowers: sum(filtered.map((row) => row.newFollowers)),
-    cancelledSubscribers: sum(filtered.map((row) => row.cancelledSubscribers)),
-    daily: filtered
+    newSubscribers: sum(daily.map((row) => row.newSubscribers)),
+    newFollowers: sum(daily.map((row) => row.newFollowers)),
+    cancelledSubscribers: sum(daily.map((row) => row.cancelledSubscribers)),
+    daily
   };
 }
 
@@ -329,39 +330,36 @@ function normalizePost(item) {
 
 function normalizeTrackingLink(item) {
   const channel = classifyTrackingChannel(item);
-  const stats = item.stats || item.metrics || item.totals || item;
+  const clicks = numberByAliases(item, [
+    "clicks", "clickCount", "totalClicks", "visits", "visitCount", "traffic"
+  ]);
+  let subscribers = numberByAliases(item, [
+    "subscribersAcquired", "newSubscribers", "subscriberAcquiredCount", "subsAcquired",
+    "newSubscriberCount", "subscriberCount", "subscribers_count", "new_subscribers"
+  ]);
+  let followers = numberByAliases(item, [
+    "followersAcquired", "newFollowers", "followerAcquiredCount",
+    "newFollowerCount", "followerCount", "followers_count", "new_followers"
+  ]);
+  if (clicks <= 0) {
+    subscribers = 0;
+    followers = 0;
+  }
+
   return {
     id: String(item.uuid || item.id || item.slug || ""),
     name: item.name || item.label || item.slug || "Link",
     slug: item.slug || "",
     channel,
-    clicks: numberValue(
-      item.clicks ?? item.clickCount ?? item.visits ?? stats.clicks ?? stats.clickCount ?? stats.visits
-    ),
-    subscribers: numberValue(
-      item.subscribersAcquired ?? item.newSubscribers ?? item.subscribers
-        ?? item.subscribersCount ?? item.subscribersTotal
-        ?? stats.subscribersAcquired ?? stats.newSubscribers ?? stats.subscribers
-        ?? stats.subscribersCount ?? stats.subscribersTotal
-    ),
-    followers: numberValue(
-      item.followersAcquired ?? item.newFollowers ?? item.followers
-        ?? item.followersCount ?? item.followersTotal
-        ?? stats.followersAcquired ?? stats.newFollowers ?? stats.followers
-        ?? stats.followersCount ?? stats.followersTotal
-    ),
-    grossRevenueCents: moneyToCents(
-      item.grossEarnings ?? item.grossRevenue ?? item.grossEarningsCents
-        ?? item.grossRevenueCents ?? item.revenueGross
-        ?? stats.grossEarnings ?? stats.grossRevenue
-        ?? stats.grossRevenueCents ?? stats.revenueGross
-    ),
-    netRevenueCents: moneyToCents(
-      item.netEarnings ?? item.netRevenue ?? item.netEarningsCents
-        ?? item.netRevenueCents ?? item.revenueNet
-        ?? stats.netEarnings ?? stats.netRevenue
-        ?? stats.netRevenueCents ?? stats.revenueNet
-    )
+    clicks,
+    subscribers,
+    followers,
+    grossRevenueCents: moneyByAliases(item, [
+      "grossEarningsCents", "grossRevenueCents", "grossEarnings", "grossRevenue", "revenueGross"
+    ]),
+    netRevenueCents: moneyByAliases(item, [
+      "netEarningsCents", "netRevenueCents", "netEarnings", "netRevenue", "revenueNet", "earnings"
+    ])
   };
 }
 
@@ -399,9 +397,33 @@ function extractAudienceRows(payload) {
   return list.map(normalizeAudienceRow).filter((row) => row.date);
 }
 
+function aggregateAudienceByDate(rows) {
+  const byDate = new Map();
+  for (const row of rows) {
+    const current = byDate.get(row.date) || { date: row.date, newSubscribers: 0, newFollowers: 0, cancelledSubscribers: 0 };
+    byDate.set(row.date, {
+      date: row.date,
+      newSubscribers: current.newSubscribers + numberValue(row.newSubscribers),
+      newFollowers: current.newFollowers + numberValue(row.newFollowers),
+      cancelledSubscribers: current.cancelledSubscribers + numberValue(row.cancelledSubscribers)
+    });
+  }
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
 function numberValue(value) {
-  const number = Number(value);
+  const number = Number(String(value ?? "").replace(/[,\s]/g, ""));
   return Number.isFinite(number) ? number : 0;
+}
+
+function numberByAliases(source, aliases) {
+  const value = findByAliases(source, aliases);
+  return numberValue(value);
+}
+
+function moneyByAliases(source, aliases) {
+  const value = findByAliases(source, aliases);
+  return moneyToCents(value);
 }
 
 function moneyToCents(value) {
@@ -416,6 +438,27 @@ function moneyToCents(value) {
   if (!Number.isFinite(number)) return 0;
   if (Number.isInteger(number) && Math.abs(number) >= 1000) return Math.round(number);
   return Math.round(number * 100);
+}
+
+function findByAliases(source, aliases, depth = 0) {
+  if (!source || typeof source !== "object" || depth > 4) return null;
+  const normalized = aliases.map((alias) => normalizeKey(alias));
+
+  for (const [key, value] of Object.entries(source)) {
+    if (normalized.includes(normalizeKey(key))) return value;
+  }
+
+  for (const value of Object.values(source)) {
+    if (value && typeof value === "object") {
+      const nested = findByAliases(value, aliases, depth + 1);
+      if (nested !== null && nested !== undefined) return nested;
+    }
+  }
+  return null;
+}
+
+function normalizeKey(value) {
+  return String(value).toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 function dateKey(value) {

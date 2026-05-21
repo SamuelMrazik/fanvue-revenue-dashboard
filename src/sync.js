@@ -40,7 +40,7 @@ export async function loadModelContent(store, modelId, kind) {
   const apiToken = await accessTokenForModel(store, model);
   if (kind === "vault") return fetchModelVault(apiToken, model);
   if (kind === "posts") return fetchModelPosts(apiToken, model);
-  if (kind === "tracking") return fetchModelTrackingSummary(apiToken, model, periodBounds("last90"));
+  if (kind === "tracking") return fetchModelTrackingSummary(apiToken, model, periodBounds("allTime", { startDate: "2018-01-01" }));
   throw new ValidationError("Unknown content type.");
 }
 
@@ -57,12 +57,12 @@ export async function proxyModelMedia(store, modelId, mediaUrl) {
     throw new ValidationError("Media URL is invalid.");
   }
 
-  const host = target.hostname.toLowerCase();
-  const allowed = host === "fanvue.com"
-    || host.endsWith(".fanvue.com")
-    || host.endsWith(".cloudfront.net")
-    || host.endsWith(".amazonaws.com");
-  if (!allowed) throw new ValidationError("Media host is not allowed.");
+  if (target.protocol !== "https:") {
+    throw new ValidationError("Media URL must use HTTPS.");
+  }
+  if (["localhost", "127.0.0.1", "::1"].includes(target.hostname)) {
+    throw new ValidationError("Media host is not allowed.");
+  }
 
   const apiToken = await accessTokenForModel(store, model);
   const upstream = await fetch(target.toString(), {
@@ -232,8 +232,8 @@ export async function syncModel(store, modelId) {
   const startedAt = new Date().toISOString();
   try {
     const apiToken = await accessTokenForModel(store, model);
-    const syncPeriod = periodBounds("last90");
-    const { metrics, raw } = await fetchFanvueMetrics({ ...model, apiToken }, { period: "last90", timeoutMs: 30000 });
+    const syncPeriod = periodBounds("allTime", { startDate: "2018-01-01" });
+    const { metrics, raw } = await fetchFanvueMetrics({ ...model, apiToken }, { period: "allTime", timeoutMs: 45000 });
     const capturedAt = metrics.sourceTimestamp ? new Date(metrics.sourceTimestamp).toISOString() : new Date().toISOString();
     const [trackingResult, audienceResult] = await Promise.allSettled([
       fetchModelTrackingSummary(apiToken, model, syncPeriod),
@@ -264,7 +264,9 @@ export async function syncModel(store, modelId) {
       syncDetails: {
         dailyEarningsPoints: metrics.dailyEarnings?.length || 0,
         trackingLinks: trackingResult.status === "fulfilled" ? (trackingResult.value.links?.length || 0) : 0,
-        audienceDays: audienceResult.status === "fulfilled" ? (audienceResult.value.daily?.length || 0) : 0
+        audienceDays: audienceResult.status === "fulfilled"
+          ? new Set((audienceResult.value.daily || []).map((row) => row.date)).size
+          : 0
       },
       contentErrors: {
         tracking: trackingResult.status === "rejected" ? trackingResult.reason.message : "",
@@ -292,7 +294,7 @@ export async function syncModel(store, modelId) {
         startedAt,
         finishedAt,
         status: "ok",
-        message: "Revenue, tracking, and audience synced (vault/posts load on their tabs)",
+        message: "All-time revenue, tracking links, and audience synced (vault/posts load on their tabs)",
         metrics: snapshot
       });
       trimDb(nextDb);

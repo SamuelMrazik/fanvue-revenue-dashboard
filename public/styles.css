@@ -1523,6 +1523,17 @@ th {
   background: var(--surface-soft);
 }
 
+.content-gen-stat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.compact-panel {
+  padding: 12px;
+}
+
 .traffic-card.internal { border-color: rgb(20 184 166 / 0.28); }
 .traffic-card.external { border-color: rgb(245 158 11 / 0.28); }
 

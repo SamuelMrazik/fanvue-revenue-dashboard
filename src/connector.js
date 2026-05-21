@@ -62,11 +62,14 @@ export async function fetchFanvueMetrics(model, options = {}) {
 }
 
 async function fetchFanvueMetricsViaApi(model, options = {}) {
-  const period = periodBounds(options.period || "last90");
-  const periodQuery = {
-    startDate: period.startIso || `${period.startDate}T00:00:00.000Z`,
-    endDate: period.endExclusiveIso
-  };
+  const requestedPeriod = options.period || "allTime";
+  const period = periodBounds(requestedPeriod, requestedPeriod === "allTime" ? { startDate: "2018-01-01" } : {});
+  const periodQuery = requestedPeriod === "allTime"
+    ? {}
+    : {
+        startDate: period.startIso || `${period.startDate}T00:00:00.000Z`,
+        endDate: period.endExclusiveIso
+      };
   const creatorUuid = creatorUuidFromModel(model);
   const endpointPath = model.endpointPath || "/insights/earnings/summary";
   const paths = [
@@ -85,7 +88,7 @@ async function fetchFanvueMetricsViaApi(model, options = {}) {
       });
       let metrics = normalizeMetrics(payload);
       const summaryPoints = metrics.dailyEarnings?.length || 0;
-      if (summaryPoints < 14) {
+      if (summaryPoints < 30 || requestedPeriod === "allTime") {
         const series = await fetchDailyEarningsSeries(model.apiToken, creatorUuid, periodQuery);
         if (series.length > summaryPoints) {
           metrics = { ...metrics, dailyEarnings: series };
@@ -111,7 +114,7 @@ async function fetchDailyEarningsSeries(accessToken, creatorUuid, periodQuery) {
       const items = await fanvueApiPaginate(accessToken, path, {
         query: periodQuery,
         listKeys: ["data", "earnings", "items"],
-        maxPages: 120
+        maxPages: 400
       });
       const byDate = new Map();
       for (const item of items) {

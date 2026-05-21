@@ -17,12 +17,12 @@ const state = {
   workspaceView: "overview",
   selectedModelId: null,
   editingModelId: null,
-  periodPreset: "last14",
+  periodPreset: "allTime",
   dateFrom: "",
   dateTo: "",
-  metricMode: "ownerNet",
-  comparisonMetric: "ownerNet",
-  comparisonPeriodPreset: "last14",
+  metricMode: "gross",
+  comparisonMetric: "gross",
+  comparisonPeriodPreset: "allTime",
   chartVisibleModels: new Set(),
   chartAnimateSeen: new Map(),
   chartWorkspaceKey: "",
@@ -236,11 +236,11 @@ function render() {
   elements.pageTitle.textContent = selected
     ? selected.displayName
     : isContentDrive
-      ? "Content Drive"
+      ? "Content Requests"
       : isSettings
         ? "Settings"
         : "Dashboard";
-  elements.syncSummary.textContent = `${openRequests} open VA request${openRequests === 1 ? "" : "s"} · ${state.models.length} model${state.models.length === 1 ? "" : "s"}`;
+  elements.syncSummary.textContent = `${openRequests} open content request${openRequests === 1 ? "" : "s"} · ${state.models.length} model${state.models.length === 1 ? "" : "s"}`;
   elements.trackingEmpty.hidden = state.models.length > 0;
   elements.overviewView.hidden = !isOverview;
   elements.contentDriveView.hidden = !isContentDrive;
@@ -249,7 +249,7 @@ function render() {
   elements.overviewButton.classList.toggle("active", isOverview);
   elements.contentDriveButton.classList.toggle("active", isContentDrive);
   elements.settingsButton?.classList.toggle("active", isSettings);
-  elements.contentDriveNavCount.textContent = `${openRequests} open request${openRequests === 1 ? "" : "s"}`;
+  elements.contentDriveNavCount.textContent = String(openRequests);
   elements.modelsSectionLabel.textContent = `Models (${state.models.length})`;
   document.querySelector("#syncAllButton").disabled = !state.models.some(canSyncModel);
   elements.periodPresetInput.value = state.periodPreset;
@@ -332,24 +332,21 @@ function renderOverview() {
     };
   });
   const grossCents = sum(periodRows.map((row) => row.totals.grossCents));
+  const fanvueNetCents = sum(periodRows.map((row) => row.totals.fanvueNetCents));
   const ownerNetCents = sum(periodRows.map((row) => row.totals.ownerNetCents));
-  const payoutPeriods = agencyPayoutPeriods();
-  const agencyDueCents = sum(periodRows.map((row) => (
-    payoutTotalForModel(row.model, payoutPeriods.fifteenth) + payoutTotalForModel(row.model, payoutPeriods.twentySeventh)
-  )));
 
   const hasSnapshots = state.snapshots.length > 0;
   const needsSync = state.models.length > 0 && !hasSnapshots;
 
-  elements.primaryMetricValue.textContent = formatMoney(ownerNetCents);
+  elements.primaryMetricValue.textContent = formatMoney(grossCents);
   elements.primaryMetricSubtext.textContent = needsSync
     ? "Models found — run Sync all to load revenue"
     : periodLabel();
   elements.modelTableSubtitle.textContent = needsSync
     ? "No synced snapshots yet — click Sync all in the top bar"
-    : `${periodLabel()} · sorted by owner net`;
-  elements.overviewGross.textContent = formatMoney(grossCents);
-  elements.overviewAgencyDue.textContent = formatMoney(agencyDueCents);
+    : `${periodLabel()} · sorted by gross`;
+  elements.overviewGross.textContent = formatMoney(fanvueNetCents);
+  elements.overviewAgencyDue.textContent = formatMoney(ownerNetCents);
 
   renderTrafficModelFilter();
   renderComparisonChart(periodRows);
@@ -402,7 +399,7 @@ function renderChartModelToggles(rows) {
 }
 
 function renderPerformanceTable(rows) {
-  const sortedRows = [...rows].sort((a, b) => b.totals.ownerNetCents - a.totals.ownerNetCents);
+  const sortedRows = [...rows].sort((a, b) => b.totals.grossCents - a.totals.grossCents);
   elements.modelPerformanceRows.innerHTML = sortedRows.map((row) => {
     const openRequests = openRequestCount(row.model.id);
     return `
@@ -415,14 +412,13 @@ function renderPerformanceTable(rows) {
           </span>
         </button>
       </td>
-      <td>${formatMoney(row.totals.ownerNetCents)}</td>
-      <td>${formatCount(row.insights.newSubscribers)}</td>
+      <td>${formatMoney(row.totals.grossCents)}</td>
       <td>${formatTrafficMetricCell(row.insights.totals)}</td>
       <td>${formatMoney(row.insights.totals.netRevenueCents)}</td>
       <td>${openRequests ? formatCount(openRequests) : "—"}</td>
     </tr>
   `;
-  }).join("") || `<tr><td colspan="7">No models in this period.</td></tr>`;
+  }).join("") || `<tr><td colspan="6">No models in this period.</td></tr>`;
 
   elements.modelPerformanceRows.querySelectorAll("[data-row-model-id]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -454,7 +450,7 @@ function renderTrafficProfitPanel(rows) {
         model: row.model,
         color: row.color,
         link,
-        ownerNetShare: row.totals.ownerNetCents
+        grossShare: row.totals.grossCents
       });
     }
   }
@@ -478,7 +474,7 @@ function renderTrafficProfitPanel(rows) {
       <td>${escapeHtml(row.link.name)}</td>
       <td>${formatTrafficMetricCell(row.link)}</td>
       <td>${formatMoney(row.link.netRevenueCents)}</td>
-      <td>${formatMoney(row.ownerNetShare)}</td>
+      <td>${formatMoney(row.grossShare)}</td>
     </tr>
   `).join("") || `<tr><td colspan="5">Sync all models to rank links by profitability.</td></tr>`;
 }
@@ -508,7 +504,7 @@ function renderModelProfileHeader(model) {
       <div>
         <h2>${escapeHtml(model.displayName)}</h2>
         <div class="model-profile-meta">
-          <span>${formatMoney(totals.ownerNetCents)} owner net · ${periodLabel()}</span>
+          <span>${formatMoney(totals.grossCents)} gross · ${periodLabel()}</span>
         </div>
       </div>
     </div>
@@ -530,9 +526,26 @@ function renderModelProfileHeader(model) {
 }
 
 function renderContentDrive() {
-  const open = state.contentRequests.filter((request) => request.status === "open");
-  elements.contentDriveSubtitle.textContent = `${open.length} open · ${state.contentRequests.length} total requests`;
-  elements.contentDriveRequests.innerHTML = renderRequestCards(state.contentRequests, { showModel: true });
+  const open = state.contentRequests.filter((request) => request.status === "open").length;
+  elements.contentDriveSubtitle.textContent = `${open} open · ${state.contentRequests.length} total requests`;
+
+  const groups = state.models.map((model) => {
+    const requests = state.contentRequests.filter((request) => request.modelId === model.id);
+    const openCount = requests.filter((request) => request.status === "open").length;
+    return { model, requests, openCount };
+  }).filter((group) => group.requests.length);
+
+  elements.contentDriveRequests.innerHTML = groups.map((group) => `
+    <section class="panel compact-panel">
+      <div class="panel-header compact">
+        <div>
+          <h3>${escapeHtml(group.model.displayName)}</h3>
+          <p>${group.openCount} open · ${group.requests.length} total</p>
+        </div>
+      </div>
+      <div class="request-list">${renderRequestCards(group.requests, { showModel: false })}</div>
+    </section>
+  `).join("") || `<p class="empty-note">No content requests yet.</p>`;
   bindRequestCardActions(elements.contentDriveRequests);
 }
 
@@ -541,12 +554,11 @@ function renderModelView(model) {
 
   const totals = periodTotalsForModel(model);
   const topSource = topSourceForModel(model);
-  const currentPayout = payoutTotalForModel(model, currentAgencyPeriod());
 
-  elements.modelOwnerNet.textContent = formatMoney(totals.ownerNetCents);
+  elements.modelOwnerNet.textContent = formatMoney(totals.grossCents);
   elements.modelPeriodLabel.textContent = periodLabel();
-  elements.modelGross.textContent = formatMoney(totals.grossCents);
-  elements.modelAgencyDue.textContent = formatMoney(currentPayout);
+  elements.modelGross.textContent = formatMoney(totals.fanvueNetCents);
+  elements.modelAgencyDue.textContent = formatMoney(totals.ownerNetCents);
   elements.modelTopSource.textContent = topSource.label;
   elements.modelTopSourceShare.textContent = topSource.value ? `${formatMoney(topSource.value)} · ${formatPercent(topSource.share)}` : "No synced revenue";
   elements.modelChartTitle.textContent = `${model.displayName} daily ${metricLabel(state.metricMode).toLowerCase()}`;
@@ -609,8 +621,8 @@ function renderDailyRows(model) {
     <tr>
       <td>${formatShortDate(row.date)}</td>
       <td>${formatMoney(row.grossCents)}</td>
+      <td>${formatMoney(row.fanvueNetCents)}</td>
       <td>${formatMoney(row.ownerNetCents)}</td>
-      <td>${formatMoney(row.agencyFeeCents)}</td>
     </tr>
   `).join("") || `<tr><td colspan="4">No daily earnings in this period.</td></tr>`;
 }
@@ -666,7 +678,7 @@ function renderConnection(model) {
   const syncDetails = snapshot?.syncDetails;
   const syncCoverage = syncDetails
     ? `${syncDetails.dailyEarningsPoints || 0} revenue days · ${syncDetails.trackingLinks || 0} links · ${syncDetails.audienceDays || 0} audience days`
-    : "Run Sync to pull revenue, tracking, and audience (last 90 days)";
+    : "Run Sync to pull all-time revenue, tracking links, and audience metrics";
 
   elements.connectionDetails.innerHTML = detailRows([
     ["Fanvue", oauthConnected ? `Connected${model.fanvueOAuth.expiresAt ? ` until ${formatDate(model.fanvueOAuth.expiresAt)}` : ""}` : fanvueConfigLabel()],
@@ -683,7 +695,7 @@ function renderConnection(model) {
 }
 
 function initializePeriod() {
-  applyPeriodPreset(state.periodPreset || "last14", { preserveCustom: Boolean(state.dateFrom && state.dateTo) });
+  applyPeriodPreset(state.periodPreset || "allTime", { preserveCustom: Boolean(state.dateFrom && state.dateTo) });
 }
 
 function updatePeriodControls() {
@@ -1161,13 +1173,7 @@ function modelInsightsForPriorPeriod(model) {
 }
 
 function totalTrafficForInsights(insights) {
-  const audienceSubs = insights.newSubscribers || 0;
-  const audienceFollowers = insights.newFollowers || 0;
-  const linkSubs = insights.totals?.subscribers || 0;
-  const linkFollowers = insights.totals?.followers || 0;
-  const subs = Math.max(audienceSubs, linkSubs);
-  const followers = Math.max(audienceFollowers, linkFollowers);
-  return subs + followers;
+  return insights.totals?.clicks || 0;
 }
 
 function formatTrafficCount(value) {
@@ -1176,9 +1182,7 @@ function formatTrafficCount(value) {
 
 function formatTrafficMetricCell(stats) {
   if (!stats) return "—";
-  const subs = stats.subscribers ?? stats.newSubscribers ?? 0;
-  const followers = stats.followers ?? stats.newFollowers ?? 0;
-  return `${formatCount(subs)} subs · ${formatCount(followers)} foll`;
+  return `${formatCount(stats.clicks || 0)} clicks`;
 }
 
 function mixColor(index) {
@@ -1347,6 +1351,7 @@ function periodLabel() {
     last14: "Last 14 days",
     last30: "Last 30 days",
     last90: "Last 90 days",
+    allTime: "All time",
     thisMonth: "This month"
   };
   if (labels[state.periodPreset]) return labels[state.periodPreset];
@@ -1370,7 +1375,7 @@ function periodBoundsFromPreset(preset, custom = {}) {
     return { preset, startDate: dateKey(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1))), endDate };
   }
   if (preset === "allTime") {
-    return { preset, startDate: custom.allTimeStart || dateKey(shiftUtcDays(today, -89)), endDate };
+    return { preset, startDate: custom.allTimeStart || dateKey(shiftUtcDays(today, -3650)), endDate };
   }
   return {
     preset: "custom",
@@ -1571,8 +1576,8 @@ function renderModelContentTab(model) {
 
   elements.modelContentSubtitle.textContent = `${open.length} open request${open.length === 1 ? "" : "s"} · ${links.length} Drive link${links.length === 1 ? "" : "s"}`;
   elements.modelContentSummary.innerHTML = `
-    <div class="content-gen-stat"><span>Open requests</span><strong>${formatCount(open.length)}</strong></div>
-    <div class="content-gen-stat"><span>Drive links</span><strong>${formatCount(links.length)}</strong></div>
+    <div class="content-gen-stat"><span>Open requests:</span><strong>${formatCount(open.length)}</strong></div>
+    <div class="content-gen-stat"><span>Drive links:</span><strong>${formatCount(links.length)}</strong></div>
   `;
   elements.modelContentRequests.innerHTML = renderRequestCards(requests, { showModel: false });
   bindRequestCardActions(elements.modelContentRequests);
@@ -1647,7 +1652,7 @@ function renderVaultPanel(model, payload) {
       </header>
       ${folder.loadError ? `<p class="empty-note">${escapeHtml(folder.loadError)}</p>` : ""}
       <div class="media-grid">
-        ${folder.media.slice(0, 24).map((item) => {
+        ${folder.media.slice(0, 120).map((item) => {
           const src = item.thumbnailUrl ? mediaProxySrc(model.id, item.thumbnailUrl) : "";
           return `
           <div class="media-tile">

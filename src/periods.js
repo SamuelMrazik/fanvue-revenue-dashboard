@@ -26,6 +26,10 @@ export function periodBounds(preset, custom = {}) {
     const startDate = dateKey(shiftDays(today, -89));
     return periodRange(preset, startDate, endToday);
   }
+  if (preset === "allTime") {
+    const startDate = custom.startDate || "2018-01-01";
+    return periodRange(preset, startDate, endToday);
+  }
   if (preset === "thisMonth") {
     const startDate = dateKey(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)));
     return periodRange(preset, startDate, endToday);
@@ -55,6 +59,7 @@ export function periodLabel(bounds) {
     last14: "Last 14 days",
     last30: "Last 30 days",
     last90: "Last 90 days",
+    allTime: "All time",
     thisMonth: "This month"
   };
   if (labels[bounds.preset]) return labels[bounds.preset];
