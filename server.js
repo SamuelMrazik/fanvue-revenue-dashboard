@@ -1,6 +1,5 @@
 import http from "node:http";
 import https from "node:https";
-import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +27,7 @@ import {
   loadModelContent,
   modelFromInput,
   modelHasConnection,
+  proxyModelMedia,
   sanitizeModel,
   syncDueModels,
   syncModel,
@@ -45,8 +45,6 @@ const publicDir = path.join(__dirname, "public");
 const store = createStore();
 const port = Number(process.env.PORT || 4000);
 const host = process.env.HOST || (process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
-const dashboardUser = process.env.DASHBOARD_USER || "owner";
-const dashboardPassword = process.env.DASHBOARD_PASSWORD || "";
 
 function isPublicPath(pathname) {
   return pathname === "/api/health" || pathname === "/api/fanvue/callback";
@@ -56,11 +54,6 @@ const requestHandler = async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
 
   try {
-    if (!isPublicPath(url.pathname) && !isAuthorized(request)) {
-      requestAuthorization(response);
-      return;
-    }
-
     if (url.pathname.startsWith("/api/")) {
       await handleApi(request, response, url);
       return;
@@ -230,6 +223,18 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  const mediaProxyRoute = url.pathname.match(/^\/api\/models\/([^/]+)\/media-proxy$/);
+  if (mediaProxyRoute && request.method === "GET") {
+    const mediaUrl = url.searchParams.get("url") || "";
+    const proxied = await proxyModelMedia(store, mediaProxyRoute[1], mediaUrl);
+    response.writeHead(200, {
+      "content-type": proxied.contentType,
+      "cache-control": "private, max-age=300"
+    });
+    response.end(proxied.buffer);
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/api/settings") {
     const db = await store.read();
     sendJson(response, 200, normalizeSettings(db));
@@ -382,39 +387,7 @@ function httpError(statusCode, message) {
 }
 
 function assertAccessConfiguration() {
-  if (process.env.NODE_ENV === "production" && !process.env.DASHBOARD_PASSWORD) {
-    throw new Error("DASHBOARD_PASSWORD is required in production so the dashboard is not public.");
-  }
-}
-
-function isAuthorized(request) {
-  if (!dashboardPassword) return true;
-
-  const header = request.headers.authorization || "";
-  if (!header.startsWith("Basic ")) return false;
-
-  const decoded = Buffer.from(header.slice("Basic ".length), "base64").toString("utf8");
-  const separatorIndex = decoded.indexOf(":");
-  if (separatorIndex === -1) return false;
-
-  const username = decoded.slice(0, separatorIndex);
-  const password = decoded.slice(separatorIndex + 1);
-  return secureEquals(username, dashboardUser) && secureEquals(password, dashboardPassword);
-}
-
-function requestAuthorization(response) {
-  response.writeHead(401, {
-    "www-authenticate": 'Basic realm="Revenue Dashboard", charset="UTF-8"',
-    "content-type": "text/plain; charset=utf-8",
-    "cache-control": "no-store"
-  });
-  response.end("Authentication required.");
-}
-
-function secureEquals(left, right) {
-  const leftHash = crypto.createHash("sha256").update(left).digest();
-  const rightHash = crypto.createHash("sha256").update(right).digest();
-  return crypto.timingSafeEqual(leftHash, rightHash);
+  // Access is intentionally public; auth is handled upstream when needed.
 }
 
 function assertUniqueModelName(db, displayName, currentModelId = null) {

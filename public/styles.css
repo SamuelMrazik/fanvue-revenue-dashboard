@@ -274,6 +274,22 @@ input:disabled {
   font-size: 13px;
 }
 
+.table-sub {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.post-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  display: block;
+}
+
 .workspace {
   min-width: 0;
   padding: 24px;

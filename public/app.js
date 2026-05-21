@@ -30,8 +30,6 @@ const state = {
     autoSyncEnabled: true,
     autoSyncIntervalMinutes: 60
   },
-  trafficMetric: "both",
-  modelTrafficMetric: "both",
   trafficModelFilter: "",
   pendingAvatarUrl: null,
   clearAvatar: false,
@@ -84,8 +82,6 @@ const elements = {
   comparisonChart: document.querySelector("#comparisonChart"),
   chartModelToggles: document.querySelector("#chartModelToggles"),
   modelPerformanceRows: document.querySelector("#modelPerformanceRows"),
-  internalTrafficChart: document.querySelector("#internalTrafficChart"),
-  internalTrafficChartSubtitle: document.querySelector("#internalTrafficChartSubtitle"),
   trafficPanelSubtitle: document.querySelector("#trafficPanelSubtitle"),
   trafficModelFilter: document.querySelector("#trafficModelFilter"),
   trafficProfitRows: document.querySelector("#trafficProfitRows"),
@@ -168,18 +164,6 @@ document.querySelector("#cancelDriveLinkButton")?.addEventListener("click", clos
 document.querySelectorAll("[data-comparison-metric]").forEach((button) => {
   button.addEventListener("click", () => {
     state.comparisonMetric = button.dataset.comparisonMetric;
-    render();
-  });
-});
-document.querySelectorAll("[data-traffic-metric]").forEach((button) => {
-  button.addEventListener("click", () => {
-    state.trafficMetric = button.dataset.trafficMetric;
-    render();
-  });
-});
-document.querySelectorAll("[data-model-traffic-metric]").forEach((button) => {
-  button.addEventListener("click", () => {
-    state.modelTrafficMetric = button.dataset.modelTrafficMetric;
     render();
   });
 });
@@ -280,13 +264,6 @@ function render() {
   document.querySelectorAll("[data-comparison-metric]").forEach((button) => {
     button.classList.toggle("active", button.dataset.comparisonMetric === state.comparisonMetric);
   });
-  document.querySelectorAll("[data-traffic-metric]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.trafficMetric === state.trafficMetric);
-  });
-  document.querySelectorAll("[data-model-traffic-metric]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.modelTrafficMetric === state.modelTrafficMetric);
-  });
-
   const workspaceKey = `${state.workspaceView}:${state.selectedModelId || ""}:${state.modelTab}`;
   if (workspaceKey !== state.chartWorkspaceKey) {
     state.chartAnimateSeen = new Map();
@@ -314,20 +291,16 @@ function renderModels() {
     return;
   }
 
-  const rankings = modelOwnerNetRankings();
-
   elements.modelList.innerHTML = state.models.map((model, index) => {
     const active = model.id === state.selectedModelId ? "active" : "";
     const color = modelColor(model, index);
     const totalRevenue = periodTotalsForModel(model).ownerNetCents;
-    const tag = modelStatusTag(model, rankings);
     return `
       <button class="model-item ${active}" type="button" data-model-id="${escapeHtml(model.id)}">
         ${modelAvatarHtml(model, color)}
         <span class="model-copy">
           <strong>${escapeHtml(model.displayName)}</strong>
           <span class="model-sidebar-meta">
-            ${tag ? `<span class="status-tag ${tag.className}">${escapeHtml(tag.label)}</span>` : ""}
             <small class="model-total-revenue">${formatMoney(totalRevenue)} total revenue</small>
           </span>
         </span>
@@ -355,8 +328,6 @@ function renderOverview() {
       totals,
       insights,
       priorInsights,
-      boosts: boostsForInsights(insights, state.trafficMetric),
-      priorBoosts: boostsForInsights(priorInsights, state.trafficMetric),
       topSource: topSourceForModel(model)
     };
   });
@@ -431,11 +402,8 @@ function renderChartModelToggles(rows) {
 }
 
 function renderPerformanceTable(rows) {
-  const rankings = modelOwnerNetRankings();
   const sortedRows = [...rows].sort((a, b) => b.totals.ownerNetCents - a.totals.ownerNetCents);
   elements.modelPerformanceRows.innerHTML = sortedRows.map((row) => {
-    const tag = modelStatusTag(row.model, rankings);
-    const boostFlag = likelyBoostActive(row.boosts, row.priorBoosts, row.insights.external, row.priorInsights.external);
     const openRequests = openRequestCount(row.model.id);
     return `
     <tr>
@@ -444,15 +412,13 @@ function renderPerformanceTable(rows) {
           ${modelAvatarHtml(row.model, row.color, { small: true })}
           <span class="table-model-copy">
             <strong>${escapeHtml(row.model.displayName)}</strong>
-            ${tag ? `<span class="status-tag ${tag.className}">${escapeHtml(tag.label)}</span>` : ""}
           </span>
         </button>
       </td>
       <td>${formatMoney(row.totals.ownerNetCents)}</td>
       <td>${formatCount(row.insights.newSubscribers)}</td>
-      <td class="${boostFlag ? "boost-alert" : ""}">${formatInternalCell(row.boosts)}${boostFlag ? `<span class="boost-hint">Likely boost</span>` : ""}</td>
-      <td>${formatTrafficMetricCell(row.insights.external, state.trafficMetric)}</td>
-      <td>${formatMoney(row.insights.externalRevenueCents)}</td>
+      <td>${formatTrafficMetricCell(row.insights.totals)}</td>
+      <td>${formatMoney(row.insights.totals.netRevenueCents)}</td>
       <td>${openRequests ? formatCount(openRequests) : "—"}</td>
     </tr>
   `;
@@ -496,7 +462,7 @@ function renderTrafficProfitPanel(rows) {
   linkRows.sort((a, b) => (b.link.netRevenueCents || 0) - (a.link.netRevenueCents || 0));
   const hasSyncGap = filteredRows.some((row) => row.insights.dataNote);
   elements.trafficPanelSubtitle.textContent = linkRows.length
-    ? `${linkRows.length} links · subs revenue only on external · ${periodLabel()}`
+    ? `${linkRows.length} links · total tracking performance · ${periodLabel()}`
     : hasSyncGap
       ? "Sync models to load tracking links."
       : "No tracking links for this filter.";
@@ -510,12 +476,11 @@ function renderTrafficProfitPanel(rows) {
         </span>
       </td>
       <td>${escapeHtml(row.link.name)}</td>
-      <td><span class="channel-pill ${row.link.channel}">${escapeHtml(row.link.channel)}</span></td>
-      <td>${formatTrafficMetricCell(row.link, state.trafficMetric)}</td>
+      <td>${formatTrafficMetricCell(row.link)}</td>
       <td>${formatMoney(row.link.netRevenueCents)}</td>
       <td>${formatMoney(row.ownerNetShare)}</td>
     </tr>
-  `).join("") || `<tr><td colspan="6">Sync all models to rank links by profitability.</td></tr>`;
+  `).join("") || `<tr><td colspan="5">Sync all models to rank links by profitability.</td></tr>`;
 }
 
 function renderVaRequestsStrip(openRequests) {
@@ -535,19 +500,7 @@ function renderModelProfileHeader(model) {
   if (!model || !elements.modelProfileHeader) return;
   const index = state.models.findIndex((item) => item.id === model.id);
   const color = modelColor(model, Math.max(index, 0));
-  const rankings = modelOwnerNetRankings();
-  const tag = modelStatusTag(model, rankings);
   const totals = periodTotalsForModel(model);
-  const tagHtml = tag ? `<span class="status-tag ${tag.className}">${escapeHtml(tag.label)}</span>` : "";
-  const insights = modelInsights(model);
-  const priorInsights = modelInsightsForPriorPeriod(model);
-  const boosts = boostsForInsights(insights, state.modelTrafficMetric);
-  const boostFlag = likelyBoostActive(
-    boosts,
-    boostsForInsights(priorInsights, state.modelTrafficMetric),
-    insights.external,
-    priorInsights.external
-  );
 
   elements.modelProfileHeader.innerHTML = `
     <div class="model-profile-card">
@@ -555,9 +508,7 @@ function renderModelProfileHeader(model) {
       <div>
         <h2>${escapeHtml(model.displayName)}</h2>
         <div class="model-profile-meta">
-          ${tagHtml}
           <span>${formatMoney(totals.ownerNetCents)} owner net · ${periodLabel()}</span>
-          ${boostFlag ? `<span class="boost-hint">Likely internal boost</span>` : ""}
         </div>
       </div>
     </div>
@@ -711,12 +662,19 @@ function renderConnection(model) {
   const errorHint = contentErrors.length
     ? contentErrors.map((row) => `${row.key}: ${row.message}`).join(" · ")
     : "";
+  const snapshot = latestSnapshotForModel(model.id);
+  const syncDetails = snapshot?.syncDetails;
+  const syncCoverage = syncDetails
+    ? `${syncDetails.dailyEarningsPoints || 0} revenue days · ${syncDetails.trackingLinks || 0} links · ${syncDetails.audienceDays || 0} audience days`
+    : "Run Sync to pull revenue, tracking, and audience (last 90 days)";
 
   elements.connectionDetails.innerHTML = detailRows([
     ["Fanvue", oauthConnected ? `Connected${model.fanvueOAuth.expiresAt ? ` until ${formatDate(model.fanvueOAuth.expiresAt)}` : ""}` : fanvueConfigLabel()],
     ["Profile", oauthConnected ? fanvueProfileLabel(model.fanvueOAuth.profile) : "Not connected"],
     ["Scopes", model.fanvueOAuth?.scope || state.fanvueStatus?.scopes || "—"],
     ["Last sync", model.lastSyncAt ? formatDate(model.lastSyncAt) : "Never"],
+    ["Sync coverage", syncCoverage],
+    ["Vault / posts", "Loaded on their tabs (not during background sync)"],
     ["Next sync", model.nextSyncAt ? formatDate(model.nextSyncAt) : "Not scheduled"],
     ["Interval", `${model.syncIntervalMinutes} minutes`],
     ["Enabled", model.enabled ? "Yes" : "No"],
@@ -818,8 +776,10 @@ function dailyPointsForModel(model) {
 }
 
 function dailyProfitPoint(date, grossCents, fanvueNetCents) {
-  const normalizedGross = grossCents || deriveGrossFromNet(fanvueNetCents);
-  const normalizedFanvueNet = fanvueNetCents || Math.round(normalizedGross * (1 - FANVUE_FEE_RATE / 100));
+  const safeGross = Math.max(Number(grossCents) || 0, 0);
+  const safeNet = Math.max(Number(fanvueNetCents) || 0, 0);
+  const normalizedGross = safeGross || deriveGrossFromNet(safeNet);
+  const normalizedFanvueNet = safeNet || Math.round(normalizedGross * (1 - FANVUE_FEE_RATE / 100));
   const agencyFeeCents = Math.round(normalizedFanvueNet * AGENCY_FEE_RATE / 100);
   return {
     date: dateKey(date),
@@ -831,8 +791,8 @@ function dailyProfitPoint(date, grossCents, fanvueNetCents) {
 }
 
 function profitForAggregate(snapshot) {
-  const fanvueNetCents = snapshot?.fanvueNetCents ?? snapshot?.revenueCents ?? 0;
-  const grossCents = snapshot?.grossRevenueCents ?? deriveGrossFromNet(fanvueNetCents);
+  const fanvueNetCents = Math.max(snapshot?.fanvueNetCents ?? snapshot?.revenueCents ?? 0, 0);
+  const grossCents = Math.max(snapshot?.grossRevenueCents ?? deriveGrossFromNet(fanvueNetCents), 0);
   const agencyFeeCents = Math.round(fanvueNetCents * AGENCY_FEE_RATE / 100);
   return {
     grossCents,
@@ -1143,45 +1103,6 @@ function syncStatusLabel(status) {
   }[status] || status || "Pending";
 }
 
-function modelOwnerNetRankings() {
-  return [...state.models]
-    .filter((model) => canSyncModel(model))
-    .map((model) => ({ model, ownerNetCents: periodTotalsForModel(model).ownerNetCents }))
-    .sort((a, b) => b.ownerNetCents - a.ownerNetCents)
-    .slice(0, 3)
-    .map((row) => row.model.id);
-}
-
-function modelStatusTag(model, topEarnerIds = []) {
-  if (!canSyncModel(model)) {
-    return { label: "UNPUBLISHED", className: "tag-unpublished" };
-  }
-  if (modelHasIssue(model)) {
-    return { label: "ISSUE", className: "tag-issue" };
-  }
-  if (modelHasTrafficWarning(model)) {
-    return { label: "WARN", className: "tag-warn" };
-  }
-  if (topEarnerIds.includes(model.id)) {
-    return { label: "EARNER", className: "tag-earner" };
-  }
-  return null;
-}
-
-function modelHasIssue(model) {
-  if (model.lastStatus === "error" || model.lastError) return true;
-  return false;
-}
-
-function modelHasTrafficWarning(model) {
-  const snapshot = latestSnapshotForModel(model.id);
-  if (!snapshot?.contentErrors) return false;
-  if (snapshot.contentErrors.tracking) return true;
-  const hasLinks = (snapshot.trackingSummary?.links?.length || 0) > 0;
-  if (hasLinks) return false;
-  return Boolean(snapshot.contentErrors.audience);
-}
-
 function contentErrorsForModel(model) {
   const snapshot = latestSnapshotForModel(model.id);
   if (!snapshot?.contentErrors) return [];
@@ -1228,69 +1149,36 @@ function modelInsightsForPriorPeriod(model) {
   const zero = { linkCount: 0, clicks: 0, subscribers: 0, followers: 0, grossRevenueCents: 0, netRevenueCents: 0 };
   const audienceDaily = (audience?.daily || []).filter((row) => dateInRange(row.date, bounds.dateFrom, bounds.dateTo));
   const links = Array.isArray(tracking?.links) ? tracking.links : [];
-  const internal = aggregateLinkStats(links.filter((link) => link.channel === "internal"));
-  const external = aggregateLinkStats(links.filter((link) => link.channel === "external"));
+  const totals = aggregateLinkStats(links);
 
   return {
     newSubscribers: sum(audienceDaily.map((row) => row.newSubscribers)) || 0,
     newFollowers: sum(audienceDaily.map((row) => row.newFollowers)) || 0,
-    internal: links.length ? internal : zero,
-    external: links.length ? external : zero,
-    externalRevenueCents: external.netRevenueCents,
+    totals: links.length ? totals : zero,
     links,
     audienceDaily
   };
 }
 
-function totalTrafficForInsights(insights, metric) {
+function totalTrafficForInsights(insights) {
   const audienceSubs = insights.newSubscribers || 0;
   const audienceFollowers = insights.newFollowers || 0;
-  const linkSubs = (insights.internal?.subscribers || 0) + (insights.external?.subscribers || 0);
-  const linkFollowers = (insights.internal?.followers || 0) + (insights.external?.followers || 0);
+  const linkSubs = insights.totals?.subscribers || 0;
+  const linkFollowers = insights.totals?.followers || 0;
   const subs = Math.max(audienceSubs, linkSubs);
   const followers = Math.max(audienceFollowers, linkFollowers);
-  if (metric === "subscribers") return subs;
-  if (metric === "followers") return followers;
   return subs + followers;
-}
-
-function trafficMetricValue(stats, metric) {
-  if (!stats) return 0;
-  if (metric === "subscribers") return stats.subscribers || 0;
-  if (metric === "followers") return stats.followers || 0;
-  return (stats.subscribers || 0) + (stats.followers || 0);
-}
-
-function boostsForInsights(insights, metric) {
-  const total = totalTrafficForInsights(insights, metric);
-  const external = trafficMetricValue(insights.external, metric);
-  const value = Math.max(total - external, 0);
-  return { total, external, value, metric };
-}
-
-function formatInternalCell(boosts) {
-  if (!boosts?.value) return "—";
-  return `${formatCount(boosts.value)} traffic`;
 }
 
 function formatTrafficCount(value) {
   return formatCount(value);
 }
 
-function formatTrafficMetricCell(stats, metric) {
+function formatTrafficMetricCell(stats) {
   if (!stats) return "—";
-  if (metric === "subscribers") return `${formatCount(stats.subscribers || stats.newSubscribers || 0)} subs`;
-  if (metric === "followers") return `${formatCount(stats.followers || stats.newFollowers || 0)} foll`;
   const subs = stats.subscribers ?? stats.newSubscribers ?? 0;
   const followers = stats.followers ?? stats.newFollowers ?? 0;
   return `${formatCount(subs)} subs · ${formatCount(followers)} foll`;
-}
-
-function likelyBoostActive(boosts, priorBoosts, external, priorExternal) {
-  if (!boosts?.value) return false;
-  const trafficUp = boosts.total > (priorBoosts?.total || 0);
-  const externalFlat = trafficMetricValue(external, boosts.metric) <= trafficMetricValue(priorExternal, boosts.metric);
-  return trafficUp && externalFlat;
 }
 
 function mixColor(index) {
@@ -1303,7 +1191,8 @@ function renderRequestCards(requests, options = {}) {
   }
 
   const modelNames = new Map(state.models.map((model) => [model.id, model.displayName]));
-  return requests.map((request) => {
+  const sorted = [...requests].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  return sorted.map((request) => {
     const modelName = modelNames.get(request.modelId) || "Unknown model";
     return `
       <article class="request-card" data-request-id="${escapeHtml(request.id)}">
@@ -1314,10 +1203,11 @@ function renderRequestCards(requests, options = {}) {
             <span class="request-type">${escapeHtml(request.type || "content")}</span>
             <span class="request-status">${escapeHtml(request.status)}</span>
           </div>
-          <button class="ghost-button request-expand" type="button" data-expand-request="${escapeHtml(request.id)}">Details</button>
         </header>
-        <div class="request-body" id="request-body-${escapeHtml(request.id)}" hidden>
+        <div class="request-body">
           <p>${escapeHtml(request.description || "No description")}</p>
+          ${request.exampleImageUrl ? `<p><a href="${escapeHtml(request.exampleImageUrl)}" target="_blank" rel="noopener noreferrer">Reference image</a></p>` : ""}
+          <small>Created ${formatDate(request.createdAt)}</small>
           ${request.status === "open" ? `
             <div class="button-row">
               <button class="solid-button" type="button" data-finish-request="${escapeHtml(request.id)}">Finished</button>
@@ -1331,12 +1221,6 @@ function renderRequestCards(requests, options = {}) {
 }
 
 function bindRequestCardActions(container) {
-  container.querySelectorAll("[data-expand-request]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const panel = document.querySelector(`#request-body-${button.dataset.expandRequest}`);
-      if (panel) panel.hidden = !panel.hidden;
-    });
-  });
   container.querySelectorAll("[data-finish-request]").forEach((button) => {
     button.addEventListener("click", () => updateRequestStatus(button.dataset.finishRequest, "finished"));
   });
@@ -1462,6 +1346,7 @@ function periodLabel() {
     last7: "Last 7 days",
     last14: "Last 14 days",
     last30: "Last 30 days",
+    last90: "Last 90 days",
     thisMonth: "This month"
   };
   if (labels[state.periodPreset]) return labels[state.periodPreset];
@@ -1555,15 +1440,12 @@ function modelInsights(model) {
   const zero = { linkCount: 0, clicks: 0, subscribers: 0, followers: 0, grossRevenueCents: 0, netRevenueCents: 0 };
   const audienceDaily = (audience?.daily || []).filter((row) => dateInRange(row.date, state.dateFrom, state.dateTo));
   const links = Array.isArray(tracking?.links) ? tracking.links : [];
-  const internal = aggregateLinkStats(links.filter((link) => link.channel === "internal"));
-  const external = aggregateLinkStats(links.filter((link) => link.channel === "external"));
+  const totals = aggregateLinkStats(links);
 
   return {
     newSubscribers: sum(audienceDaily.map((row) => row.newSubscribers)) || audience?.newSubscribers || 0,
     newFollowers: sum(audienceDaily.map((row) => row.newFollowers)) || audience?.newFollowers || 0,
-    internal: links.length ? internal : (tracking?.internal || zero),
-    external: links.length ? external : (tracking?.external || zero),
-    externalRevenueCents: external.netRevenueCents,
+    totals: links.length ? totals : (tracking?.totals || zero),
     links,
     audienceDaily,
     dataNote: buildInsightsNote(snapshot)
@@ -1653,16 +1535,7 @@ function renderModelTabPanels(model) {
 
 function renderModelTrafficTab(model) {
   const insights = modelInsights(model);
-  const priorInsights = modelInsightsForPriorPeriod(model);
-  const total = totalTrafficForInsights(insights, state.modelTrafficMetric);
-  const external = trafficMetricValue(insights.external, state.modelTrafficMetric);
-  const boosts = boostsForInsights(insights, state.modelTrafficMetric);
-  const boostFlag = likelyBoostActive(
-    boosts,
-    boostsForInsights(priorInsights, state.modelTrafficMetric),
-    insights.external,
-    priorInsights.external
-  );
+  const total = totalTrafficForInsights(insights);
 
   const snapshot = latestSnapshotForModel(model.id);
   const syncNote = trafficInsightsNote(snapshot);
@@ -1670,29 +1543,25 @@ function renderModelTrafficTab(model) {
     ? syncNote
     : `${periodLabel()} · ${insights.links.length} tracking links`;
   elements.modelTrafficSplit.innerHTML = `
-    <article class="traffic-card internal"><span>Internal</span><strong>${formatInternalCell(boosts)}</strong>${boostFlag ? `<small>Likely internal boost</small>` : ""}</article>
-    <article class="traffic-card external"><span>External</span><strong>${formatTrafficCount(external)}</strong></article>
-    <article class="traffic-card total"><span>Total</span><strong>${formatTrafficCount(total)}</strong></article>
+    <article class="traffic-card total"><span>Total traffic</span><strong>${formatTrafficCount(total)}</strong></article>
+    <article class="traffic-card external"><span>Tracked links</span><strong>${formatCount(insights.links.length)}</strong></article>
+    <article class="traffic-card internal"><span>Link revenue</span><strong>${formatMoney(insights.totals.netRevenueCents)}</strong></article>
   `;
-
-  renderInternalTrafficChart(model);
 
   if (!insights.links.length) {
     const emptyMessage = syncNote || buildInsightsNote(snapshot) || "No tracking links returned. Reconnect Fanvue with read:tracking_links, then sync.";
     elements.modelTrafficSplit.innerHTML = `<div class="chart-empty compact-empty">${escapeHtml(emptyMessage)}</div>`;
-    elements.modelTrackingRows.innerHTML = `<tr><td colspan="4">${escapeHtml(emptyMessage)}</td></tr>`;
-    renderInternalTrafficChart(model);
+    elements.modelTrackingRows.innerHTML = `<tr><td colspan="3">${escapeHtml(emptyMessage)}</td></tr>`;
     return;
   }
 
   elements.modelTrackingRows.innerHTML = insights.links.map((link) => `
     <tr>
       <td>${escapeHtml(link.name)}</td>
-      <td><span class="channel-pill ${link.channel}">${escapeHtml(link.channel)}</span></td>
-      <td>${formatTrafficMetricCell(link, state.modelTrafficMetric)}</td>
+      <td>${formatTrafficMetricCell(link)}</td>
       <td>${formatMoney(link.netRevenueCents)}</td>
     </tr>
-  `).join("") || `<tr><td colspan="4">Sync this model to load tracking links.</td></tr>`;
+  `).join("") || `<tr><td colspan="3">Sync this model to load tracking links.</td></tr>`;
 }
 
 function renderModelContentTab(model) {
@@ -1749,8 +1618,13 @@ async function loadPostsContent(force) {
     renderPostsPanel(model, payload);
   } catch (error) {
     elements.postsSubtitle.textContent = error.message;
-    elements.postsRows.innerHTML = `<tr><td colspan="5">${escapeHtml(error.message)}</td></tr>`;
+    elements.postsRows.innerHTML = `<tr><td colspan="6">${escapeHtml(error.message)}</td></tr>`;
   }
+}
+
+function mediaProxySrc(modelId, mediaUrl) {
+  if (!mediaUrl) return "";
+  return `/api/models/${encodeURIComponent(modelId)}/media-proxy?url=${encodeURIComponent(mediaUrl)}`;
 }
 
 function renderVaultPanel(model, payload) {
@@ -1759,7 +1633,7 @@ function renderVaultPanel(model, payload) {
     elements.vaultContent.innerHTML = `<div class="chart-empty compact-empty">Open this tab to load vault folders.</div>`;
     return;
   }
-  elements.vaultSubtitle.textContent = `${payload.folderCount} folders · ${payload.mediaCount} media items`;
+  elements.vaultSubtitle.textContent = `${payload.folderCount} folders · ${payload.mediaCount} media items · thumbnails via dashboard proxy`;
   if (payload.warning) {
     elements.vaultContent.innerHTML = `<div class="chart-empty compact-empty">${escapeHtml(payload.warning)}</div>`;
     return;
@@ -1771,13 +1645,16 @@ function renderVaultPanel(model, payload) {
         <strong>${escapeHtml(folder.name)}</strong>
         <span>${folder.mediaCount} items</span>
       </header>
+      ${folder.loadError ? `<p class="empty-note">${escapeHtml(folder.loadError)}</p>` : ""}
       <div class="media-grid">
-        ${folder.media.slice(0, 24).map((item) => `
+        ${folder.media.slice(0, 24).map((item) => {
+          const src = item.thumbnailUrl ? mediaProxySrc(model.id, item.thumbnailUrl) : "";
+          return `
           <div class="media-tile">
-            ${item.thumbnailUrl ? `<img src="${escapeHtml(item.thumbnailUrl)}" alt="">` : `<span>${escapeHtml(item.mediaType)}</span>`}
+            ${src ? `<img src="${escapeHtml(src)}" alt="" loading="lazy">` : `<span>${escapeHtml(item.mediaType)}</span>`}
             <small>${escapeHtml(item.name)}</small>
-          </div>
-        `).join("") || `<span class="empty-note">No media in this folder.</span>`}
+          </div>`;
+        }).join("") || `<span class="empty-note">No media in this folder.</span>`}
       </div>
     </article>
   `).join("") || `<div class="chart-empty compact-empty">Vault is empty.</div>`;
@@ -1792,20 +1669,26 @@ function renderPostsPanel(model, payload) {
   const counts = payload.counts || {};
   if (payload.warning) {
     elements.postsSubtitle.textContent = payload.warning;
-    elements.postsRows.innerHTML = `<tr><td colspan="5">${escapeHtml(payload.warning)}</td></tr>`;
+    elements.postsRows.innerHTML = `<tr><td colspan="6">${escapeHtml(payload.warning)}</td></tr>`;
     return;
   }
 
   elements.postsSubtitle.textContent = `${payload.total} posts · ${counts.published || 0} published · ${counts.scheduled || 0} scheduled · ${counts.draft || 0} draft`;
   elements.postsRows.innerHTML = payload.posts.map((post) => `
     <tr>
-      <td>${escapeHtml(post.title)}</td>
+      <td>
+        ${post.thumbnailUrl ? `<img class="post-thumb" src="${escapeHtml(mediaProxySrc(model.id, post.thumbnailUrl))}" alt="" loading="lazy">` : "—"}
+      </td>
+      <td>
+        <strong>${escapeHtml(post.title)}</strong>
+        ${post.caption && post.caption !== post.title ? `<div class="table-sub">${escapeHtml(post.caption)}</div>` : ""}
+      </td>
       <td><span class="pill">${escapeHtml(post.status)}</span></td>
       <td>${formatCount(post.mediaCount)}</td>
       <td>${post.priceCents ? formatMoney(post.priceCents) : "—"}</td>
       <td>${formatDate(post.publishedAt || post.createdAt)}</td>
     </tr>
-  `).join("") || `<tr><td colspan="5">No posts returned by Fanvue API.</td></tr>`;
+  `).join("") || `<tr><td colspan="6">No posts returned by Fanvue API.</td></tr>`;
 }
 
 function startOfUtcDay(date) {
@@ -1913,59 +1796,6 @@ async function saveSettings(event) {
 elements.autoSyncEnabledInput?.addEventListener("change", () => {
   elements.autoSyncIntervalInput.disabled = !elements.autoSyncEnabledInput.checked;
 });
-
-function internalTrafficDailyPoints(model, metric) {
-  const snapshot = latestSnapshotForModel(model.id);
-  const audienceDaily = (snapshot?.audienceSummary?.daily || [])
-    .filter((row) => dateInRange(row.date, state.dateFrom, state.dateTo));
-  const insights = modelInsights(model);
-  const externalTotal = trafficMetricValue(insights.external, metric);
-  const dayCount = Math.max(audienceDaily.length, 1);
-  const externalPerDay = Math.round(externalTotal / dayCount);
-
-  return audienceDaily.map((row) => {
-    const total = metric === "subscribers"
-      ? row.newSubscribers
-      : metric === "followers"
-        ? row.newFollowers
-        : (row.newSubscribers || 0) + (row.newFollowers || 0);
-    return {
-      date: row.date,
-      value: Math.max(total - externalPerDay, 0)
-    };
-  });
-}
-
-function renderInternalTrafficChart(model) {
-  if (!elements.internalTrafficChart) return;
-  const dates = selectedDateRange();
-  const points = internalTrafficDailyPoints(model, state.modelTrafficMetric);
-  const index = state.models.findIndex((item) => item.id === model.id);
-  const color = modelColor(model, Math.max(index, 0));
-
-  elements.internalTrafficChartSubtitle.textContent = `${periodLabel()} · spikes may indicate Fanvue internal boost`;
-
-  mountChart(elements.internalTrafficChart, {
-    series: [{
-      label: "Internal traffic",
-      color,
-      points: dates.map((date) => {
-        const point = points.find((item) => item.date === date);
-        return { date, value: point?.value || 0 };
-      })
-    }],
-    dates,
-    formatValue: formatCount,
-    emptyMessage: "Sync this model to see daily internal traffic.",
-    animateKey: chartAnimateKey(
-      "model-internal-traffic",
-      model.id,
-      state.modelTrafficMetric,
-      state.periodPreset,
-      [...dates].join(",")
-    )
-  });
-}
 
 function showToast(message) {
   elements.toast.textContent = message;

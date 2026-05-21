@@ -6,6 +6,8 @@ import {
 } from "./fanvue-api.js";
 import { isoEndExclusive } from "./periods.js";
 
+const CONTENT_MAX_PAGES = 60;
+
 export async function fetchModelVault(accessToken, model) {
   const creatorUuid = creatorUuidFromModel(model);
   if (!creatorUuid) throw new Error("Connect Fanvue to load vault data.");
@@ -19,7 +21,10 @@ export async function fetchModelVault(accessToken, model) {
   let lastError = null;
   for (const path of folderCandidates) {
     try {
-      folders = await fanvueApiPaginate(accessToken, path, { listKeys: ["folders"] });
+      folders = await fanvueApiPaginate(accessToken, path, {
+        listKeys: ["folders"],
+        maxPages: CONTENT_MAX_PAGES
+      });
       if (folders.length) break;
     } catch (error) {
       lastError = error;
@@ -40,21 +45,14 @@ export async function fetchModelVault(accessToken, model) {
 
   const enrichedFolders = [];
   for (const folder of folders) {
-    const folderName = folder.name || folder.folderName || folder.slug || folder.id;
-    let media = Array.isArray(folder.media) ? folder.media : [];
-    if (!media.length && folderName) {
-      try {
-        media = await fanvueApiPaginate(accessToken, `/creators/${creatorUuid}/vault/folders/${encodeURIComponent(folderName)}/media`, {
-          listKeys: ["media"]
-        });
-      } catch {
-        media = [];
-      }
-    }
+    const folderId = folder.uuid || folder.id || folder.mediaFolderUuid || null;
+    const folderName = folder.name || folder.folderName || folder.slug || folderId;
+    const media = await fetchFolderMedia(accessToken, creatorUuid, folder);
     enrichedFolders.push({
-      id: String(folder.id || folderName),
+      id: String(folderId || folderName),
       name: String(folderName),
       mediaCount: media.length,
+      loadError: media.length ? "" : (folder.mediaCount > 0 ? "Fanvue returned folder metadata but media list was empty. Try Refresh vault." : ""),
       media: media.map(normalizeVaultMedia).slice(0, 120)
     });
   }
@@ -82,7 +80,8 @@ export async function fetchModelPosts(accessToken, model) {
     try {
       posts = await fanvueApiPaginate(accessToken, candidate.path, {
         query: candidate.query,
-        listKeys: ["posts"]
+        listKeys: ["posts"],
+        maxPages: CONTENT_MAX_PAGES
       });
       if (posts.length) break;
     } catch (error) {
@@ -96,7 +95,7 @@ export async function fetchModelPosts(accessToken, model) {
         total: 0,
         counts: {},
         posts: [],
-        warning: "Posts endpoint not available. Reconnect Fanvue with read:post scope, then sync again."
+        warning: "Posts endpoint not available. Reconnect Fanvue with read:post scope, then open the Posts tab."
       };
     }
     throw lastError;
@@ -117,7 +116,7 @@ export async function fetchModelPosts(accessToken, model) {
     creatorUuid,
     total: normalized.length,
     counts,
-    posts: normalized.slice(0, 200)
+    posts: normalized.slice(0, 300)
   };
 }
 
@@ -136,7 +135,7 @@ export async function fetchModelTrackingSummary(accessToken, model, period) {
     try {
       links = await fanvueApiPaginate(accessToken, path, {
         listKeys: ["links", "trackingLinks"],
-        pagination: "cursor"
+        maxPages: CONTENT_MAX_PAGES
       });
       if (links.length) break;
     } catch (error) {
@@ -187,8 +186,8 @@ export async function fetchModelAudienceSummary(accessToken, model, period) {
     try {
       const paginated = await fanvueApiPaginate(accessToken, candidate.path, {
         query: candidate.query,
-        pagination: "cursor",
-        listKeys: ["data", "items", "events", "daily", "series", "results", "buckets"]
+        listKeys: ["data", "items", "events", "daily", "series", "results", "buckets"],
+        maxPages: CONTENT_MAX_PAGES
       });
       rows = paginated.map(normalizeAudienceRow).filter((row) => row.date);
       if (rows.length) break;
@@ -211,6 +210,39 @@ export async function fetchModelAudienceSummary(accessToken, model, period) {
     cancelledSubscribers: sum(filtered.map((row) => row.cancelledSubscribers)),
     daily: filtered
   };
+}
+
+async function fetchFolderMedia(accessToken, creatorUuid, folder) {
+  const embedded = Array.isArray(folder.media) ? folder.media : [];
+  if (embedded.length) return embedded;
+
+  const folderId = folder.uuid || folder.id || folder.mediaFolderUuid || null;
+  const folderName = folder.name || folder.folderName || folder.slug || null;
+  const pathCandidates = [];
+
+  if (folderId) {
+    pathCandidates.push(`/creators/${creatorUuid}/vault/folders/${folderId}/media`);
+    pathCandidates.push(`/vault/folders/${folderId}/media`);
+  }
+  if (folderName) {
+    const encoded = encodeURIComponent(String(folderName));
+    pathCandidates.push(`/creators/${creatorUuid}/vault/folders/${encoded}/media`);
+    pathCandidates.push(`/vault/folders/${encoded}/media`);
+  }
+
+  for (const path of pathCandidates) {
+    try {
+      const media = await fanvueApiPaginate(accessToken, path, {
+        listKeys: ["media", "items", "content"],
+        maxPages: CONTENT_MAX_PAGES
+      });
+      if (media.length) return media;
+    } catch {
+      // try next path shape
+    }
+  }
+
+  return [];
 }
 
 function audienceQueryFromPeriod(period) {
@@ -237,11 +269,22 @@ function normalizeAudienceRow(row) {
 }
 
 function normalizeVaultMedia(item) {
+  const thumbnail = item.thumbnailUrl
+    || item.thumbnail?.url
+    || item.previewUrl
+    || item.preview?.url
+    || item.posterUrl
+    || item.coverUrl
+    || item.imageUrl
+    || item.urls?.thumbnail
+    || item.url
+    || "";
+
   return {
     id: String(item.mediaUuid || item.uuid || item.id || ""),
-    name: item.name || item.filename || "Media",
+    name: item.name || item.filename || item.caption || "Media",
     mediaType: item.mediaType || item.type || "image",
-    thumbnailUrl: item.thumbnailUrl || item.previewUrl || item.url || "",
+    thumbnailUrl: typeof thumbnail === "string" ? thumbnail : "",
     createdAt: item.createdAt || item.created_at || null
   };
 }
@@ -252,14 +295,35 @@ function normalizePost(item) {
   if (statusRaw.includes("sched")) status = "scheduled";
   else if (statusRaw.includes("draft")) status = "draft";
 
+  const caption = item.caption || item.text || item.description || "";
+  const title = item.title || caption || "(untitled)";
+
+  const media = Array.isArray(item.media) ? item.media : [];
+  const firstMedia = media[0] || {};
+  const thumbnail = firstMedia.thumbnailUrl
+    || firstMedia.thumbnail?.url
+    || firstMedia.previewUrl
+    || firstMedia.preview?.url
+    || firstMedia.posterUrl
+    || firstMedia.coverUrl
+    || firstMedia.imageUrl
+    || firstMedia.url
+    || item.thumbnailUrl
+    || item.previewUrl
+    || "";
+
   return {
     id: String(item.uuid || item.id || ""),
-    title: item.title || item.caption || item.text || "(untitled)",
+    title: title.length > 160 ? `${title.slice(0, 157)}…` : title,
+    caption: caption.length > 240 ? `${caption.slice(0, 237)}…` : caption,
     status,
     publishedAt: item.publishedAt || item.published_at || null,
     createdAt: item.createdAt || item.created_at || null,
-    mediaCount: Array.isArray(item.mediaUuids) ? item.mediaUuids.length : (item.mediaCount || 0),
-    priceCents: moneyToCents(item.price || item.priceCents)
+    mediaCount: Array.isArray(item.mediaUuids)
+      ? item.mediaUuids.length
+      : (Array.isArray(item.media) ? item.media.length : (item.mediaCount || 0)),
+    priceCents: moneyToCents(item.price || item.priceCents),
+    thumbnailUrl: typeof thumbnail === "string" ? thumbnail : ""
   };
 }
 
@@ -276,19 +340,27 @@ function normalizeTrackingLink(item) {
     ),
     subscribers: numberValue(
       item.subscribersAcquired ?? item.newSubscribers ?? item.subscribers
+        ?? item.subscribersCount ?? item.subscribersTotal
         ?? stats.subscribersAcquired ?? stats.newSubscribers ?? stats.subscribers
+        ?? stats.subscribersCount ?? stats.subscribersTotal
     ),
     followers: numberValue(
       item.followersAcquired ?? item.newFollowers ?? item.followers
+        ?? item.followersCount ?? item.followersTotal
         ?? stats.followersAcquired ?? stats.newFollowers ?? stats.followers
+        ?? stats.followersCount ?? stats.followersTotal
     ),
     grossRevenueCents: moneyToCents(
       item.grossEarnings ?? item.grossRevenue ?? item.grossEarningsCents
+        ?? item.grossRevenueCents ?? item.revenueGross
         ?? stats.grossEarnings ?? stats.grossRevenue
+        ?? stats.grossRevenueCents ?? stats.revenueGross
     ),
     netRevenueCents: moneyToCents(
       item.netEarnings ?? item.netRevenue ?? item.netEarningsCents
+        ?? item.netRevenueCents ?? item.revenueNet
         ?? stats.netEarnings ?? stats.netRevenue
+        ?? stats.netRevenueCents ?? stats.revenueNet
     )
   };
 }

@@ -157,7 +157,7 @@
             <div class="panel-header compact">
               <div>
                 <h2>All models</h2>
-                <p id="modelTableSubtitle">Period performance and traffic split</p>
+                <p id="modelTableSubtitle">Period performance and tracking totals</p>
               </div>
             </div>
             <div class="table-scroll wide-table">
@@ -167,9 +167,8 @@
                     <th>Model</th>
                     <th>Owner net</th>
                     <th>New subs</th>
-                    <th>Internal</th>
-                    <th>Traffic ext</th>
-                    <th>Ext. revenue</th>
+                    <th>Tracking traffic</th>
+                    <th>Tracking revenue</th>
                     <th>Requests</th>
                   </tr>
                 </thead>
@@ -182,7 +181,7 @@
             <div class="panel-header compact">
               <div>
                 <h2>Traffic &amp; profitability</h2>
-                <p id="trafficPanelSubtitle">Most profitable links across models</p>
+                <p id="trafficPanelSubtitle">Tracking links across models</p>
               </div>
               <div class="traffic-filters">
                 <label class="compact-select">
@@ -191,11 +190,6 @@
                     <option value="">All models</option>
                   </select>
                 </label>
-                <div class="pill-group" id="trafficMetricPills" role="group" aria-label="Traffic metric">
-                  <button class="pill-button active" type="button" data-traffic-metric="both">Both</button>
-                  <button class="pill-button" type="button" data-traffic-metric="subscribers">Subs</button>
-                  <button class="pill-button" type="button" data-traffic-metric="followers">Followers</button>
-                </div>
               </div>
             </div>
             <div class="table-scroll wide-table">
@@ -204,7 +198,6 @@
                   <tr>
                     <th>Model</th>
                     <th>Link</th>
-                    <th>Channel</th>
                     <th>Traffic</th>
                     <th>Subs revenue</th>
                     <th>Owner net share</th>
@@ -346,30 +339,15 @@
               <div class="panel-header compact">
                 <div>
                   <h2>Tracking links</h2>
-                  <p id="modelTrackingSubtitle">External vs Fanvue-reported traffic</p>
-                </div>
-                <div class="pill-group" id="modelTrafficMetricPills" role="group" aria-label="Traffic metric">
-                  <button class="pill-button active" type="button" data-model-traffic-metric="both">Both</button>
-                  <button class="pill-button" type="button" data-model-traffic-metric="subscribers">Subs</button>
-                  <button class="pill-button" type="button" data-model-traffic-metric="followers">Followers</button>
+                  <p id="modelTrackingSubtitle">Total tracking performance</p>
                 </div>
               </div>
               <div class="traffic-split-cards" id="modelTrafficSplit"></div>
-              <section class="panel internal-traffic-chart-panel">
-                <div class="panel-header compact">
-                  <div>
-                    <h3>Internal traffic by day</h3>
-                    <p id="internalTrafficChartSubtitle">Estimated internal traffic from Fanvue insights</p>
-                  </div>
-                </div>
-                <div class="chart-wrap internal-traffic-chart" id="internalTrafficChart" data-chart-context="model-internal-traffic"></div>
-              </section>
               <div class="table-scroll">
                 <table>
                   <thead>
                     <tr>
                       <th>Link</th>
-                      <th>Channel</th>
                       <th>Traffic</th>
                       <th>Subs revenue</th>
                     </tr>
@@ -449,7 +427,7 @@
               <div class="panel-header compact">
                 <div>
                   <h2>Vault</h2>
-                  <p id="vaultSubtitle">Folders and media for this model</p>
+                  <p id="vaultSubtitle">Folders and media for this model (open tab or Refresh vault to load)</p>
                 </div>
                 <button class="ghost-button" id="refreshVaultButton" type="button">Refresh vault</button>
               </div>
@@ -462,7 +440,7 @@
               <div class="panel-header compact">
                 <div>
                   <h2>Posts</h2>
-                  <p id="postsSubtitle">Published, scheduled, and draft posts</p>
+                  <p id="postsSubtitle">Post list from Fanvue API with thumbnail previews</p>
                 </div>
                 <button class="ghost-button" id="refreshPostsButton" type="button">Refresh posts</button>
               </div>
@@ -470,7 +448,8 @@
                 <table>
                   <thead>
                     <tr>
-                      <th>Title</th>
+                      <th>Preview</th>
+                      <th>Caption / title</th>
                       <th>Status</th>
                       <th>Media</th>
                       <th>Price</th>

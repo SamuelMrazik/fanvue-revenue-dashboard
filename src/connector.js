@@ -1,4 +1,12 @@
-const DEFAULT_TIMEOUT_MS = 15000;
+import {
+  creatorUuidFromModel,
+  fanvueApiBaseUrl,
+  fanvueApiPaginate,
+  fanvueApiRequest
+} from "./fanvue-api.js";
+import { periodBounds } from "./periods.js";
+
+const DEFAULT_TIMEOUT_MS = 30000;
 
 const METRIC_ALIASES = {
   revenueCents: {
@@ -15,6 +23,10 @@ const METRIC_ALIASES = {
 };
 
 export async function fetchFanvueMetrics(model, options = {}) {
+  if (usesFanvueApi(model.apiBaseUrl)) {
+    return fetchFanvueMetricsViaApi(model, options);
+  }
+
   const url = buildMetricsUrl(model.apiBaseUrl, model.endpointPath);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
@@ -49,14 +61,117 @@ export async function fetchFanvueMetrics(model, options = {}) {
   }
 }
 
-export function buildMetricsUrl(apiBaseUrl, endpointPath = "/insights/earnings/summary") {
+async function fetchFanvueMetricsViaApi(model, options = {}) {
+  const period = periodBounds(options.period || "last90");
+  const periodQuery = {
+    startDate: period.startIso || `${period.startDate}T00:00:00.000Z`,
+    endDate: period.endExclusiveIso
+  };
+  const creatorUuid = creatorUuidFromModel(model);
+  const endpointPath = model.endpointPath || "/insights/earnings/summary";
+  const paths = [
+    endpointPath,
+    ...(creatorUuid && !endpointPath.includes(creatorUuid)
+      ? [`/creators/${creatorUuid}/insights/earnings/summary`]
+      : [])
+  ];
+
+  let lastError = null;
+  for (const path of paths) {
+    try {
+      const payload = await fanvueApiRequest(model.apiToken, path, {
+        query: periodQuery,
+        signal: options.signal
+      });
+      let metrics = normalizeMetrics(payload);
+      const summaryPoints = metrics.dailyEarnings?.length || 0;
+      if (summaryPoints < 14) {
+        const series = await fetchDailyEarningsSeries(model.apiToken, creatorUuid, periodQuery);
+        if (series.length > summaryPoints) {
+          metrics = { ...metrics, dailyEarnings: series };
+        }
+      }
+      return { metrics, raw: payload };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("Fanvue earnings API request failed.");
+}
+
+async function fetchDailyEarningsSeries(accessToken, creatorUuid, periodQuery) {
+  const paths = [
+    "/insights/earnings",
+    ...(creatorUuid ? [`/creators/${creatorUuid}/insights/earnings`] : [])
+  ];
+
+  for (const path of paths) {
+    try {
+      const items = await fanvueApiPaginate(accessToken, path, {
+        query: periodQuery,
+        listKeys: ["data", "earnings", "items"],
+        maxPages: 120
+      });
+      const byDate = new Map();
+      for (const item of items) {
+        const date = earningsDateKey(item.date || item.periodStart || item.period_start);
+        if (!date) continue;
+        const net = moneyObjectNetValue(item) ?? moneyObjectValue(item) ?? 0;
+        const gross = moneyObjectGrossValue(item) ?? net;
+        const previous = byDate.get(date) || { gross: 0, net: 0 };
+        byDate.set(date, {
+          gross: Math.max(previous.gross + gross, 0),
+          net: Math.max(previous.net + net, 0)
+        });
+      }
+      return [...byDate.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([date, totals]) => ({
+          date,
+          grossRevenueCents: totals.gross,
+          fanvueNetCents: totals.net
+        }));
+    } catch {
+      // try next path
+    }
+  }
+
+  return [];
+}
+
+export function buildMetricsUrl(apiBaseUrl, endpointPath = "/insights/earnings/summary", query = {}) {
   if (!apiBaseUrl || typeof apiBaseUrl !== "string") {
     throw new Error("API base URL is required.");
   }
 
   const base = apiBaseUrl.endsWith("/") ? apiBaseUrl : `${apiBaseUrl}/`;
   const path = endpointPath.startsWith("/") ? endpointPath.slice(1) : endpointPath;
-  return new URL(path || "", base).toString();
+  const url = new URL(path || "", base);
+  for (const [key, value] of Object.entries(query || {})) {
+    if (value !== undefined && value !== null && value !== "") {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return url.toString();
+}
+
+function usesFanvueApi(apiBaseUrl) {
+  const base = apiBaseUrl || fanvueApiBaseUrl();
+  try {
+    const hostname = new URL(base).hostname;
+    return hostname === "api.fanvue.com" || hostname.endsWith(".fanvue.com");
+  } catch {
+    return false;
+  }
+}
+
+function earningsDateKey(value) {
+  if (!value) return "";
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
 }
 
 export function normalizeMetrics(payload) {
@@ -105,9 +220,9 @@ function normalizeFanvueEarningsSummary(payload) {
   const latestPeriod = overTime.at(-1);
 
   return {
-    revenueCents,
-    grossRevenueCents: grossRevenueCents ?? revenueCents,
-    fanvueNetCents: revenueCents,
+    revenueCents: Math.max(revenueCents, 0),
+    grossRevenueCents: Math.max(grossRevenueCents ?? revenueCents, 0),
+    fanvueNetCents: Math.max(revenueCents, 0),
     fanvueFeeCents: Math.max((grossRevenueCents ?? revenueCents) - revenueCents, 0),
     subscribers: 0,
     messages: 0,
@@ -120,8 +235,8 @@ function normalizeFanvueEarningsSummary(payload) {
     otherRevenueCents: moneyObjectValue(breakdown.other || earningsByType.other) ?? 0,
     dailyEarnings: overTime.map((period) => ({
       date: period.periodStart || period.date || null,
-      grossRevenueCents: moneyObjectGrossValue(period) ?? moneyObjectValue(period) ?? 0,
-      fanvueNetCents: moneyObjectNetValue(period) ?? moneyObjectValue(period) ?? 0
+      grossRevenueCents: Math.max(moneyObjectGrossValue(period) ?? moneyObjectValue(period) ?? 0, 0),
+      fanvueNetCents: Math.max(moneyObjectNetValue(period) ?? moneyObjectValue(period) ?? 0, 0)
     })).filter((period) => period.date),
     clicks: 0,
     currency: findStringValue(payload, ["currency", "currency_code", "currencycode"]) || "USD",
@@ -165,9 +280,9 @@ function normalizeFanvueEarningsList(payload) {
   if (revenueCents === 0 && !payload.data.length) return null;
 
   return {
-    revenueCents,
-    grossRevenueCents: grossRevenueCents || revenueCents,
-    fanvueNetCents: revenueCents,
+    revenueCents: Math.max(revenueCents, 0),
+    grossRevenueCents: Math.max(grossRevenueCents || revenueCents, 0),
+    fanvueNetCents: Math.max(revenueCents, 0),
     fanvueFeeCents: Math.max((grossRevenueCents || revenueCents) - revenueCents, 0),
     subscribers: 0,
     messages: 0,
@@ -191,16 +306,22 @@ function moneyObjectValue(source) {
 
 function moneyObjectNetValue(source) {
   if (!source || typeof source !== "object") return null;
-  const net = coerceNumber(source.net);
-  if (Number.isFinite(net)) return Math.round(net);
+  const net = coerceNumber(source.net ?? source.netAmount ?? source.net_amount);
+  if (Number.isFinite(net)) return normalizeMoneyToCents(net);
   return null;
 }
 
 function moneyObjectGrossValue(source) {
   if (!source || typeof source !== "object") return null;
-  const gross = coerceNumber(source.gross);
-  if (Number.isFinite(gross)) return Math.round(gross);
+  const gross = coerceNumber(source.gross ?? source.grossAmount ?? source.gross_amount);
+  if (Number.isFinite(gross)) return normalizeMoneyToCents(gross);
   return null;
+}
+
+function normalizeMoneyToCents(value) {
+  if (!Number.isFinite(value)) return 0;
+  if (Number.isInteger(value) && Math.abs(value) >= 1000) return Math.round(value);
+  return Math.round(value * 100);
 }
 
 function buildHeaders(apiToken, url) {

@@ -53,7 +53,7 @@ export async function fanvueApiRequest(accessToken, path, options = {}) {
 
 export async function fanvueApiPaginate(accessToken, path, options = {}) {
   const size = options.limit ?? 50;
-  const maxPages = options.maxPages ?? 8;
+  const maxPages = options.maxPages ?? 60;
   if (options.pagination !== "cursor") {
     const pageItems = await paginateByPage(accessToken, path, options, size, maxPages);
     if (pageItems.length) return pageItems;
@@ -109,6 +109,7 @@ async function paginateByCursor(accessToken, path, options, size, maxPages) {
       query: {
         ...options.query,
         limit: size,
+        size: options.query?.size ?? size,
         cursor: cursor || undefined
       }
     });
